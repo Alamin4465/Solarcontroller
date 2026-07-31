@@ -1,0 +1,446 @@
+/* ================= LOGIN PAGE CSS ================= */
+/* Matches style.css - Glass morphism theme */
+
+/* ================= RESET & BASE ================= */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', 'Poppins', 'Noto Sans Bengali', 'Tahoma', 'Geneva', 'Verdana', sans-serif;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #9073BA;
+    padding: 20px;
+    position: relative;
+    overflow-x: hidden;
+}
+
+/* Glow orbs matching style.css */
+body::before {
+    content: '';
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    background: rgba(0, 255, 204, 0.15);
+    filter: blur(120px);
+    top: 10%;
+    left: 10%;
+    z-index: 0;
+}
+
+body::after {
+    content: '';
+    position: absolute;
+    width: 350px;
+    height: 350px;
+    background: rgba(102, 126, 234, 0.15);
+    filter: blur(120px);
+    bottom: 10%;
+    right: 10%;
+    z-index: 0;
+}
+
+/* ================= GLASS CARD (matches style.css) ================= */
+.card {
+    width: 100%;
+    max-width: 480px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    overflow: hidden;
+    animation: fadeInScale 0.3s ease-out;
+    position: relative;
+    z-index: 1;
+}
+
+/* Neon border glow matching style.css */
+.card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #00ffcc, #3b96f5);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* ================= HEADER ================= */
+.header {
+    text-align: center;
+    padding: 30px 20px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.header i {
+    font-size: 50px;
+    color: #00ffcc;
+    margin-bottom: 12px;
+    animation: spin 6s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.header h1 {
+    font-size: 22px;
+    color: white;
+    margin-bottom: 6px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.header p {
+    font-size: 14px;
+    font-weight: bold;
+    color: #F78B63;
+}
+
+/* ================= TABS ================= */
+.tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tab {
+    flex: 1;
+    text-align: center;
+    padding: 15px 10px;
+    cursor: pointer;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+    transition: all 0.3s ease;
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    letter-spacing: 0.3px;
+    position: relative;
+}
+
+.tab i {
+    margin-right: 8px;
+    font-size: 14px;
+}
+
+.tab.active {
+    color: #00ffcc;
+    background: rgba(0, 255, 204, 0.08);
+    border-bottom: 2px solid #00ffcc;
+}
+
+.tab:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* ================= FORM CONTAINER ================= */
+.form-container {
+    padding: 30px 28px;
+}
+
+.form {
+    display: none;
+    animation: slideIn 0.3s ease;
+}
+
+.form.active {
+    display: block;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* ================= INPUT GROUPS ================= */
+.input-group {
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.input-group i:first-child {
+    position: absolute;
+    left: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 14px 45px 14px 45px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    font-size: 14px;
+    color: #ffffff;
+    transition: all 0.3s ease;
+    outline: none;
+}
+
+.input-group input::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+    opacity: 1;
+}
+
+.input-group input:focus {
+    border-color: #00ffcc;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 3px rgba(0, 255, 204, 0.1);
+}
+
+/* ================= TOGGLE PASSWORD ================= */
+.toggle-password {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.5);
+    z-index: 2;
+    font-size: 16px;
+    transition: 0.3s;
+}
+
+.toggle-password:hover {
+    color: #00ffcc;
+}
+
+/* ================= BUTTON ================= */
+.btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #00ffcc 0%, #00b894 100%);
+    color: #0f172a;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 255, 204, 0.3);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #0f172a;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+/* ================= LINKS ================= */
+.links {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+    font-size: 13px;
+}
+
+.remember-me {
+    color: rgba(255, 255, 255, 0.6);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.remember-me input {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #00ffcc;
+}
+
+.forgot-password {
+    text-align: center;
+    margin-top: 15px;
+}
+
+.forgot-password a {
+    color: rgba(255, 255, 255, 0.5);
+    text-decoration: none;
+    font-size: 13px;
+    transition: 0.3s;
+}
+
+.forgot-password a:hover {
+    color: #00ffcc;
+}
+
+/* ================= TERMS ================= */
+.terms {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 15px 0 20px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.terms input {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #00ffcc;
+}
+
+.terms a {
+    color: #00ffcc;
+    text-decoration: none;
+    transition: 0.3s;
+}
+
+.terms a:hover {
+    text-decoration: underline;
+}
+
+/* ================= PASSWORD STRENGTH ================= */
+.strength-meter {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+
+.strength-meter-fill {
+    height: 100%;
+    width: 0%;
+    transition: all 0.3s ease;
+}
+
+.strength-text {
+    font-size: 11px;
+    margin-top: 6px;
+    text-align: right;
+}
+
+.weak { background: #ef4444; width: 25%; }
+.medium { background: #f59e0b; width: 50%; }
+.strong { background: #10b981; width: 75%; }
+.very-strong { background: #00ffcc; width: 100%; }
+
+/* ================= TOAST (matches style.css) ================= */
+.toast {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    padding: 14px 28px;
+    border-radius: 50px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    z-index: 10000;
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    pointer-events: none;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    max-width: 90%;
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+.toast.success {
+    background: rgba(16, 185, 129, 0.95);
+    color: white;
+    border-left: 4px solid #059669;
+}
+
+.toast.error {
+    background: rgba(239, 68, 68, 0.95);
+    color: white;
+    border-left: 4px solid #dc2626;
+}
+
+.toast.info {
+    background: rgba(59, 130, 246, 0.95);
+    color: white;
+    border-left: 4px solid #2563eb;
+}
+
+.toast.warning {
+    background: rgba(245, 158, 11, 0.95);
+    color: white;
+    border-left: 4px solid #d97706;
+}
+
+/* ================= RESPONSIVE ================= */
+@media (max-width: 480px) {
+    .card {
+        max-width: 100%;
+        border-radius: 18px;
+    }
+    .form-container {
+        padding: 20px;
+    }
+    .tab {
+        font-size: 13px;
+        padding: 12px 8px;
+    }
+    .tab i {
+        margin-right: 5px;
+        font-size: 13px;
+    }
+    .header h1 {
+        font-size: 20px;
+    }
+    .header i {
+        font-size: 40px;
+    }
+}
