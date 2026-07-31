@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="manifest" href="manifest.json">
+	<meta name="theme-color" content="#1E3A8A">
+    <title>সোলার স্মার্ট কন্ট্রোলার</title>
+    
+    <!-- Firebase Modular Import Map v11 -->
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js",
+                "firebase/auth": "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js",
+                "firebase/database": "https://www.gstatic.com/firebasejs/11.1.0/firebase-database.js"
+            }
+        }
+    </script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/settings.css">
+    </head>
+<body>
+
+<!-- Authentication Loading Screen -->
+<div id="authChecking">
+    <div class="loader-content">
+        <div class="spinner"></div>
+        <h2>Connecting...</h2>
+        <p id="authStatus">Checking authentication...</p>
+    </div>
+</div>
+
+<!-- Toast Notification (একবারই রাখা হয়েছে) -->
+<div id="toast" class="toast"></div>
+
+<!-- Header -->
+<header>
+    <button class="menu-btn" id="menuBtn">
+        <i class="fas fa-ellipsis-vertical"></i>
+    </button>
+
+    <div class="title">
+        <h1><i class="fas fa-sun sun"></i> Solar Smart Controller</h1>
+        <p>Embedded IoT Solar Panel Monitoring & Control System</p>
+    </div>
+
+    <div class="time-box">
+        <div id="time" class="time">--:--:--</div>
+        <div id="date" class="date">----/--/--</div>
+    </div>
+
+    <!-- Dropdown Menu -->
+    <div id="dropdown" class="dropdown">
+        <div class="item" id="profileMenuBtn">
+            <i class="fas fa-user"></i> প্রোফাইল
+        </div>
+        <div class="item" id="settingsMenuBtn">
+            <i class="fas fa-cog"></i> সেটিংস
+        </div>
+        <div class="divider"></div>
+        <div class="item logout" id="logoutMenuBtn">
+            <i class="fas fa-sign-out-alt"></i> লগআউট
+        </div>
+    </div>
+</header>
+
+<!-- Navigation -->
+<nav class="nav">
+    <div class="indicator"></div>
+
+    <button class="nav-btn active" data-page="dashboard" onclick="navigateTo('dashboard')">
+        <i class="fas fa-chart-line"></i> ড্যাশবোর্ড
+    </button>
+
+    <button class="nav-btn" data-page="control" onclick="navigateTo('control')">
+        <i class="fas fa-sliders-h"></i> কন্ট্রোল
+    </button>
+
+    <button class="nav-btn" data-page="analysis" onclick="navigateTo('analysis')">
+        <i class="fas fa-chart-bar"></i> এনালাইসিস
+    </button>
+</nav>
+
+<!-- Main Content -->
+<main class="main-container">
+    <div id="content">
+        <div class="text-center" style="padding: 50px;">
+            <div class="loader"></div>
+            <p class="text-muted mt-20">লোড হচ্ছে...</p>
+        </div>
+    </div>
+</main>
+
+<!-- Main JS -->
+<script type="module" src="js/main.js"></script>
+
+</body>
+</html>
