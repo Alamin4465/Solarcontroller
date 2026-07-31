@@ -196,75 +196,81 @@ header::before {
     transform: scale(1.05);
 }
 
-/* ================= DROPDOWN (ফিক্সড) ================= */
-.dropdown {
+/* ================= DROPDOWN ================= */
+.dropdown{
     position: fixed;
     top: 65px;
     left: 15px;
     width: 220px;
+
     display: none;
+    flex-direction: column;
+
+    background: rgba(30,41,59,.96);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+
+    border: 1px solid rgba(0,255,204,.2);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+
     overflow: hidden;
-    z-index: 999;
-    background: transparent;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid rgba(0, 255, 204, 0.2);
-    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
-    padding: 8px 0;
+    padding: 6px 0;
+
+    z-index: 9999;
 }
 
-.dropdown .item {
-    padding: 12px 20px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.25s ease;
+.dropdown.show{
+    display: flex;
+}
+
+.dropdown .item{
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
+
+    padding: 13px 18px;
+    margin: 0;
+
     color: #e2e8f0;
+    font-size: 14px;
+    font-weight: 500;
+
+    cursor: pointer;
+    transition: .25s;
+
     border-left: 3px solid transparent;
-    margin: 2px 8px;
-    border-radius: 10px;
-    background: transparent;
+    flex: 0 0 auto;      /* গুরুত্বপূর্ণ */
 }
 
-.dropdown .item i {
-    width: 22px;
+.dropdown .item i{
+    width: 20px;
     text-align: center;
     color: #00ffcc;
     font-size: 16px;
 }
 
-.dropdown .item:hover {
-    background: rgba(0, 255, 204, 0.1);
+.dropdown .item:hover{
+    background: rgba(0,255,204,.12);
+    color: #00ffcc;
     border-left-color: #00ffcc;
-    transform: translateX(4px);
 }
 
-/* ========== লগআউট বাটন স্পেসিফিক ========== */
-.dropdown .logout {
-    color: #ef4444 !important;
-    border-left-color: transparent !important;
-    margin-top: 6px;
-    border-top: 1px solid rgba(239, 68, 68, 0.15);
-    padding-top: 14px;
+.dropdown .logout{
+    color: #ef4444;
+    border-top: 1px solid rgba(239,68,68,.15);
+    margin-top: 4px;
 }
 
-.dropdown .logout i {
-    color: #ef4444 !important;
+.dropdown .logout i{
+    color: #ef4444;
 }
 
-.dropdown .logout:hover {
-    background: rgba(239, 68, 68, 0.12) !important;
-    border-left-color: #ef4444 !important;
+.dropdown .logout:hover{
+    background: rgba(239,68,68,.12);
+    border-left-color: #ef4444;
+    color: #ff6b6b;
 }
-
-.dropdown .item:last-child {
-    margin-bottom: 4px;
-}
-
 /* ================= TIME BOX ================= */
 .time-box {
     margin: 15px;
