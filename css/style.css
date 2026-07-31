@@ -197,6 +197,30 @@ header::before {
 }
 
 
+.dropdown{
+    position: fixed;
+    top: 65px;
+    left: 15px;
+    width: 220px;
+
+    display: none;
+    flex-direction: column;
+
+    background: rgba(30,41,59,.96);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+
+    border: 1px solid rgba(0,255,204,.2);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+
+    overflow: hidden;
+    padding: 6px 0;
+
+    z-index: 9999;
+}
+
+
 /* ================= TIME BOX ================= */
 .time-box {
     margin: 15px;
