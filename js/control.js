@@ -1,1234 +1,719 @@
-// js/control.js - অটো মোডে ব্রাশ অটো কন্ট্রোল সহ (UI তে লুকানো থাকলেও কাজ করবে)
+// js/main.js - Multiple ESP32 Support (এক User, একাধিক Device)
 
-// ==================== Firebase Imports ====================
-import { ref, onValue, get, push, update, set } from 'firebase/database';
+import { initializeApp } from "firebase/app";
+import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
+import { getDatabase, ref, set, get, update, push, onValue, goOnline, goOffline } from "firebase/database";
 
-// ==================== ইউটিলিটি: কমান্ড বিল্ডার ====================
-function buildCommand(action, extraData = {}) {
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    const currentUser = window.currentUser;
-    
-    return {
-        action: action,
-        ...extraData,
-        timestamp: Date.now(),
-        user_id: currentUserId,
-        user_email: currentUser?.email || '',
-        device_id: currentDeviceId
-    };
+// Import page loaders
+import { loadDashboard } from './dashboard.js';
+import { loadControl } from './control.js';
+import { loadAnalysis } from './analysis.js';
+import { setupSettings } from './settings.js';
+import { loadProfile } from './profile.js';
+
+// Firebase Configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyBP9zk3Y8wBBCfvnRKmcExMP-uIbINuTwc",
+    authDomain: "solar-panel-c798c.firebaseapp.com",
+    databaseURL: "https://solar-panel-c798c-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "solar-panel-c798c",
+    storageBucket: "solar-panel-c798c.firebasestorage.app",
+    messagingSenderId: "619952775462",
+    appId: "1:619952775462:web:f7c42fef5b7178c42c21e7"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const database = getDatabase(app);
+
+window.database = database;
+window.auth = auth;
+window.ref = ref;
+window.set = set;
+window.get = get;
+window.update = update;
+window.push = push;
+window.onValue = onValue;
+window.signOut = signOut;
+
+// Global Variables
+let currentUser = null;
+let currentUserId = null;
+let currentDeviceId = null;
+let deviceManager = null;
+let userDevices = {};   // ✅ সব device list
+
+// ==================== AUTH LOADING SCREEN ====================
+function initAuthLoadingScreen() {
+    const authCheckingDiv = document.getElementById("authChecking");
+    if (!authCheckingDiv) return;
+    const appContainer = document.getElementById("app") || document.querySelector(".container");
+    if (appContainer) appContainer.style.display = "none";
 }
 
-// ==================== ক্লিনিং সেটিংস লোডার ====================
-function getCleaningSettings() {
-    const defaultSettings = {
-        duration: 30,
-        interval: 6,
-        cycles: 3,
-        breakTime: 10
-    };
-    
-    if (window.cleaningSettings) {
-        return {
-            ...defaultSettings,
-            ...window.cleaningSettings
-        };
+function hideAuthLoadingScreen() {
+    const authCheckingDiv = document.getElementById("authChecking");
+    if (authCheckingDiv) {
+        authCheckingDiv.style.opacity = '0';
+        setTimeout(() => {
+            authCheckingDiv.style.display = 'none';
+            const appContainer = document.getElementById("app") || document.querySelector(".container");
+            if (appContainer) appContainer.style.display = "";
+        }, 500);
+    }
+}
+
+function updateAuthStatus(message, isError = false) {
+    const authStatusEl = document.getElementById("authStatus");
+    if (authStatusEl) {
+        authStatusEl.innerHTML = message;
+        authStatusEl.style.color = isError ? "#ffcccc" : "";
+    }
+}
+
+function showNotification(message, type = "info") {
+    const toast = document.getElementById("toast");
+    if (toast) {
+        toast.textContent = message;
+        toast.className = `toast ${type} show`;
+        setTimeout(() => toast.classList.remove("show"), 3000);
+    } else {
+        alert(message);
+    }
+    console.log(`[${type}] ${message}`);
+}
+window.showNotification = showNotification;
+
+// ==================== আইডি জেনারেশন ====================
+function generateUserIdFromName(userName) {
+    let cleanName = userName.trim().replace(/\s+/g, '_');
+    cleanName = cleanName.replace(/[^a-zA-Z0-9_]/g, '');
+    return `SolarController_${cleanName}`;
+}
+
+// ✅ Device ID জেনারেশন (Project Name দিয়ে)
+function generateDeviceId(projectName, email) {
+    const cleanEmail = email.toLowerCase().trim();
+    let hash = 0;
+    for (let i = 0; i < cleanEmail.length; i++) {
+        hash = ((hash << 5) - hash) + cleanEmail.charCodeAt(i);
+        hash = hash & hash;
     }
     
-    return defaultSettings;
+    // Project name + Email hash
+    let cleanProject = projectName.trim().replace(/\s+/g, '_');
+    cleanProject = cleanProject.replace(/[^a-zA-Z0-9_]/g, '').substring(0, 15);
+    
+    const projectHash = Math.abs(hash).toString(16).substring(0, 4).toUpperCase();
+    const timeHash = Date.now().toString(36).substring(-4).toUpperCase();
+    
+    return `ESP32_${cleanProject}_${projectHash}${timeHash}`;
 }
 
-// ==================== মেইন কন্ট্রোল লোডার ====================
-export async function loadControl() {
+// ==================== বিদ্যমান Data খোঁজা ====================
+async function getExistingUserByEmail(email) {
+    try {
+        const usersRef = ref(database, 'Users');
+        const snapshot = await get(usersRef);
+        
+        if (snapshot.exists()) {
+            const users = snapshot.val();
+            for (const [userId, userData] of Object.entries(users)) {
+                if (userData && userData.email === email) {
+                    return { userId, userData };
+                }
+            }
+        }
+        return null;
+    } catch (error) {
+        console.error("Error finding user:", error);
+        return null;
+    }
+}
+
+// ✅ সব Device list আনা
+async function getUserDevices(userId) {
+    try {
+        const devicesRef = ref(database, `Devices/${userId}`);
+        const snapshot = await get(devicesRef);
+        
+        if (snapshot.exists()) {
+            return snapshot.val();
+        }
+        return {};
+    } catch (error) {
+        console.error("Error getting devices:", error);
+        return {};
+    }
+}
+
+// ==================== ডাটা স্ট্রাকচার ====================
+async function ensureDataStructure(devicePath) {
+    try {
+        const dataPath = `${devicePath}/data`;
+        const dataRef = ref(database, dataPath);
+        const dataSnapshot = await get(dataRef);
+        
+        const defaultData = {
+            current_data: {
+                solar_voltage: 0, solar_current: 0,
+                battery_voltage: 0, battery_current: 0,
+                battery_soc: 0, load_voltage: 0, load_current: 0,
+                brush_status: 'stopped', pump_status: 'off',
+                cleaning_status: 'inactive', timestamp: Date.now()
+            },
+            system_status: {
+                mode: 'manual', power_source: 'grid',
+                last_updated: Date.now(), auto_mode_running: false,
+                current_reason: 'সিস্টেম স্টার্ট'
+            },
+            settings: {
+                auto_mode_thresholds: {
+                    SOLAR_MIN_VOLTAGE: 12.5, SOLAR_GOOD_VOLTAGE: 13.0,
+                    BATTERY_MIN_VOLTAGE: 11.8, BATTERY_CRITICAL_SOC: 25,
+                    BATTERY_GOOD_SOC: 40, last_updated: Date.now()
+                },
+                cleaning: {
+                    duration: 30, interval: 6, cycles: 3,
+                    breakTime: 10, last_updated: Date.now()
+                },
+                battery_cutoff: {
+                    full_voltage: 14.0, recover_voltage: 13.3,
+                    last_updated: Date.now()
+                }
+            },
+            last_command: {},
+            alerts: [],
+            history: [],
+            commands: {}
+        };
+        
+        if (!dataSnapshot.exists()) {
+            await set(dataRef, defaultData);
+            console.log("✅ Data structure created");
+            return true;
+        } else {
+            const existingData = dataSnapshot.val();
+            let needsUpdate = false;
+            
+            if (!existingData.current_data) { existingData.current_data = defaultData.current_data; needsUpdate = true; }
+            if (!existingData.system_status) { existingData.system_status = defaultData.system_status; needsUpdate = true; }
+            if (!existingData.alerts) { existingData.alerts = []; needsUpdate = true; }
+            if (!existingData.history) { existingData.history = []; needsUpdate = true; }
+            if (!existingData.commands) { existingData.commands = {}; needsUpdate = true; }
+            if (!existingData.last_command) { existingData.last_command = {}; needsUpdate = true; }
+            
+            if (!existingData.settings) {
+                existingData.settings = defaultData.settings;
+                needsUpdate = true;
+            } else {
+                if (!existingData.settings.auto_mode_thresholds) { existingData.settings.auto_mode_thresholds = defaultData.settings.auto_mode_thresholds; needsUpdate = true; }
+                if (!existingData.settings.cleaning) { existingData.settings.cleaning = defaultData.settings.cleaning; needsUpdate = true; }
+                if (!existingData.settings.battery_cutoff) { existingData.settings.battery_cutoff = defaultData.settings.battery_cutoff; needsUpdate = true; }
+            }
+            
+            if (existingData.current_data) {
+                const cd = existingData.current_data;
+                if (cd.load_current === undefined) { cd.load_current = cd.battery_current || 0; needsUpdate = true; }
+                if (cd.brush_status === undefined) { cd.brush_status = 'stopped'; needsUpdate = true; }
+                if (cd.pump_status === undefined) { cd.pump_status = 'off'; needsUpdate = true; }
+                if (cd.cleaning_status === undefined) { cd.cleaning_status = 'inactive'; needsUpdate = true; }
+                if (cd.dust_level !== undefined) { delete cd.dust_level; needsUpdate = true; }
+                if (cd.efficiency !== undefined) { delete cd.efficiency; needsUpdate = true; }
+            }
+            
+            if (needsUpdate) {
+                await set(dataRef, existingData);
+                console.log("✅ Data structure updated");
+            }
+            return true;
+        }
+    } catch (error) {
+        console.error("Error ensuring data structure:", error);
+        return false;
+    }
+}
+
+// ==================== DEVICE MANAGER CLASS ====================
+class DeviceManager {
+    constructor() {
+        this.currentUserId = null;
+        this.currentDeviceId = null;
+        this.userEmail = null;
+        this.userName = null;
+    }
+
+    async initialize(user, userData = {}) {
+        if (!user || !database) return false;
+
+        try {
+            this.userEmail = user.email;
+            this.userName = userData.userName || user.displayName || this.formatDisplayName(this.userEmail);
+            
+            // ✅ User খুঁজুন অথবা তৈরি করুন
+            const existingUser = await getExistingUserByEmail(this.userEmail);
+            
+            if (existingUser) {
+                this.currentUserId = existingUser.userId;
+                if (existingUser.userData.user_name) {
+                    this.userName = existingUser.userData.user_name;
+                }
+                console.log("✅ Existing user:", this.currentUserId);
+            } else {
+                this.currentUserId = generateUserIdFromName(this.userName);
+                console.log("✅ New user:", this.currentUserId);
+            }
+            
+            // ✅ সব device list আনা
+            userDevices = await getUserDevices(this.currentUserId);
+            console.log("📱 Devices found:", Object.keys(userDevices).length);
+            
+            // ✅ যদি কোনো device না থাকে → নতুন তৈরি
+            // ✅ যদি device থাকে → user সিলেক্ট করবে
+            let deviceId = null;
+            const deviceIds = Object.keys(userDevices);
+            
+            if (deviceIds.length === 0) {
+                // প্রথম device তৈরি
+                deviceId = generateDeviceId("Solar_Project_1", this.userEmail);
+                console.log("✅ First device created:", deviceId);
+                userDevices[deviceId] = { device_name: "Solar Project 1", created_at: Date.now() };
+            } else {
+                // আগের device save করুন
+                deviceId = localStorage.getItem('selectedDeviceId');
+                
+                if (!deviceId || !userDevices[deviceId]) {
+                    deviceId = deviceIds[0];   // Default → প্রথম device
+                }
+            }
+            
+            this.currentDeviceId = deviceId;
+            
+            // User তৈরি/আপডেট
+            await this.createOrLoadUser(existingUser);
+            
+            // Device তৈরি/আপডেট
+            await this.createOrLoadDevice();
+            
+            // Data structure
+            const devicePath = `Devices/${this.currentUserId}/${this.currentDeviceId}`;
+            await ensureDataStructure(devicePath);
+            
+            // Global set
+            window.currentUserId = this.currentUserId;
+            window.currentDeviceId = this.currentDeviceId;
+            window.currentUser = user;
+            window.userEmail = this.userEmail;
+            window.userName = this.userName;
+            window.userDevices = userDevices;   // ✅ সব device list global
+            
+            console.log("✅ Initialized:", {
+                userId: this.currentUserId,
+                deviceId: this.currentDeviceId,
+                totalDevices: deviceIds.length
+            });
+            
+            return true;
+            
+        } catch (error) {
+            console.error("DeviceManager error:", error);
+            showNotification('সিস্টেম ইনিশিয়ালাইজ সমস্যা: ' + error.message, 'error');
+            return false;
+        }
+    }
+    
+    formatDisplayName(email) {
+        let username = email.split('@')[0];
+        if (username.length > 0) {
+            return username.charAt(0).toUpperCase() + username.slice(1);
+        }
+        return "User";
+    }
+
+    async createOrLoadUser(existingUser = null) {
+        try {
+            const userRef = ref(database, `Users/${this.currentUserId}`);
+            
+            if (!existingUser) {
+                const userData = {
+                    user_name: this.userName,
+                    email: this.userEmail,
+                    created_at: Date.now(),
+                    last_login: Date.now(),
+                    status: 'active'
+                };
+                
+                const snapshot = await get(userRef);
+                if (!snapshot.exists()) {
+                    await set(userRef, userData);
+                    showNotification(`ইউজার তৈরি হয়েছে`, 'success');
+                } else {
+                    await update(userRef, { last_login: Date.now() });
+                    showNotification(`স্বাগতম, ${this.userName}!`, 'success');
+                }
+            } else {
+                await update(userRef, { last_login: Date.now() });
+                showNotification(`স্বাগতম, ${this.userName}!`, 'success');
+            }
+            return true;
+        } catch (error) {
+            console.error("User error:", error);
+            return false;
+        }
+    }
+
+    async createOrLoadDevice() {
+        try {
+            const devicePath = `Devices/${this.currentUserId}/${this.currentDeviceId}`;
+            const deviceRef = ref(database, devicePath);
+            
+            const deviceInfo = {
+                device_name: userDevices[this.currentDeviceId]?.device_name || "Solar Project",
+                user_id: this.currentUserId,
+                user_email: this.userEmail,
+                created_at: userDevices[this.currentDeviceId]?.created_at || Date.now(),
+                last_updated: Date.now(),
+                status: 'active'
+            };
+            
+            const snapshot = await get(deviceRef);
+            if (!snapshot.exists()) {
+                await set(deviceRef, deviceInfo);
+                console.log("✅ Device created");
+            } else {
+                await update(deviceRef, { last_updated: Date.now() });
+            }
+            return true;
+        } catch (error) {
+            console.error("Device error:", error);
+            return false;
+        }
+    }
+
+    getCurrentDeviceId() { return this.currentDeviceId; }
+    getCurrentUserId() { return this.currentUserId; }
+    
+    cleanup() { console.log("🧹 Cleaned up"); }
+}
+
+// ==================== ✅ DEVICE SWITCHER UI ====================
+window.showDeviceSelector = function() {
     const content = document.getElementById("content");
     if (!content) return;
     
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
+    const deviceIds = Object.keys(userDevices);
     
-    if (!database || !currentUserId || !currentDeviceId) {
-        content.innerHTML = `<div class="card text-center"><p>ডিভাইস সিলেক্ট করুন</p></div>`;
-        return;
+    let html = `
+        <div class="device-selector-container">
+            <div class="device-selector-header">
+                <i class="fas fa-microchip"></i>
+                <h2>আপনার ডিভাইস সমূহ</h2>
+                <p>যে ডিভাইস কন্ট্রোল করতে চান সেটা সিলেক্ট করুন</p>
+            </div>
+            
+            <div class="device-list">
+    `;
+    
+    if (deviceIds.length === 0) {
+        html += `
+            <div class="no-devices">
+                <i class="fas fa-inbox"></i>
+                <p>কোনো ডিভাইস নেই</p>
+                <p style="font-size: 12px; color: #64748b;">ESP32 যোগ করতে নিচের বাটন চাপুন</p>
+            </div>
+        `;
+    } else {
+        deviceIds.forEach(deviceId => {
+            const device = userDevices[deviceId];
+            const isActive = deviceId === window.currentDeviceId;
+            
+            html += `
+                <div class="device-card ${isActive ? 'active' : ''}" data-device-id="${deviceId}">
+                    <div class="device-icon">
+                        <i class="fas fa-microchip"></i>
+                    </div>
+                    <div class="device-info">
+                        <div class="device-name">${device.device_name || deviceId}</div>
+                        <div class="device-id">${deviceId.substring(0, 30)}...</div>
+                        <div class="device-status">${isActive ? '✅ সক্রিয়' : '🔘 নিষ্ক্রিয়'}</div>
+                    </div>
+                    ${isActive ? '<i class="fas fa-check-circle device-check"></i>' : ''}
+                </div>
+            `;
+        });
     }
     
-    content.innerHTML = `
-        <div class="control-grid">
-            <!-- Power Control -->
-            <div class="card">
-                <div class="card-header"><i class="fas fa-bolt"></i><h3>পাওয়ার কন্ট্রোল মোড</h3></div>
-                <div class="mode-buttons">
-                    <button id="autoModeBtn" class="btn-mode"><i class="fas fa-robot"></i> অটো</button>
-                    <button id="manualModeBtn" class="btn-mode"><i class="fas fa-hand"></i> ম্যানুয়াল</button>
-                    <button id="stopModeBtn" class="btn-mode danger"><i class="fas fa-stop"></i> জরুরি বন্ধ</button>
-                </div>
-                <div id="powerSourceSection" class="power-buttons">
-                    <h4>পাওয়ার সোর্স</h4>
-                    <div class="source-group">
-                        <button id="powerSolarBtn" class="btn-source solar">
-                            <div class="toggle-track">
-                                <span class="toggle-label"><i class="fas fa-sun"></i> সোলার</span>
-                                <span class="toggle-thumb"><i class="fas fa-check"></i></span>
-                                <span class="toggle-label"><i class="fas fa-power-off"></i></span>
-                            </div>
-                        </button>
-                        
-                        <button id="powerBatteryBtn" class="btn-source battery">
-                            <div class="toggle-track">
-                                <span class="toggle-label"><i class="fas fa-car-battery"></i> ব্যাটারি</span>
-                                <span class="toggle-thumb"><i class="fas fa-check"></i></span>
-                                <span class="toggle-label"><i class="fas fa-power-off"></i></span>
-                            </div>
-                        </button>
-                        
-                        <button id="powerGridBtn" class="btn-source grid">
-                            <div class="toggle-track">
-                                <span class="toggle-label"><i class="fas fa-city"></i> গ্রিড</span>
-                                <span class="toggle-thumb"><i class="fas fa-check"></i></span>
-                                <span class="toggle-label"><i class="fas fa-power-off"></i></span>
-                            </div>
-                        </button>
-                        
-                        <button id="powerAllOffBtn" class="btn-source off">
-                            <div class="toggle-track">
-                                <span class="toggle-label"><i class="fas fa-power-off"></i> অফ</span>
-                                <span class="toggle-thumb"><i class="fas fa-times"></i></span>
-                                <span class="toggle-label"><i class="fas fa-ban"></i></span>
-                            </div>
-                        </button>
-                    </div>
-                </div>
-                <div class="current-status">
-                    <span>বর্তমান মোড: </span>
-                    <span id="currentModeStatus" class="badge manual">ম্যানুয়াল</span>
-                </div>
-                <div id="autoReason" class="auto-reason hidden">
-                    <i class="fas fa-info-circle"></i> <span id="autoReasonText"></span>
-                </div>
-                <div id="autoStatus" class="auto-status hidden">
-                    <i class="fas fa-sync-alt fa-spin"></i> <span id="autoStatusText">ডাটা চেক করা হচ্ছে...</span>
-                </div>
-                <!-- অটো ব্রাশ স্ট্যাটাস (UI তে লুকানো) -->
-                <div id="autoBrushStatus" class="auto-brush-status hidden">
-                    <i class="fas fa-brush"></i> <span id="autoBrushStatusText">ব্রাশ: নিষ্ক্রিয়</span>
-                </div>
+    html += `
             </div>
             
-            <!-- Brush Control - শুধু ম্যানুয়াল মোডে দেখাবে -->
-            <div id="brushCard" class="card">
-                <div class="card-header"><i class="fas fa-brush"></i><h3>ব্রাশ কন্ট্রোল</h3></div>
-                <div class="brush-mode">
-                    <span class="brush-mode-label"><i class="fas fa-info-circle"></i> ব্রাশ মোড: <strong id="brushModeText">ম্যানুয়াল</strong></span>
-                </div>
-                <div id="manualBrushControls" class="manual-controls">
-                    <div class="direction-buttons">
-                        <button id="brushForwardBtn" class="btn-control success"><i class="fas fa-arrow-right"></i> ফরওয়ার্ড</button>
-                        <button id="brushReverseBtn" class="btn-control warning"><i class="fas fa-arrow-left"></i> রিভার্স</button>
-                        <button id="brushStopBtn" class="btn-control danger"><i class="fas fa-stop"></i> স্টপ</button>
-                    </div>
-                </div>
-                <div class="mt-2">ব্রাশ: <strong id="brushStatusText">বন্ধ</strong></div>
-            </div>
-            
-            <!-- Pump Control - শুধু ম্যানুয়াল মোডে দেখাবে -->
-            <div id="pumpCard" class="card">
-                <div class="card-header"><i class="fas fa-water-pump"></i><h3>পাম্প কন্ট্রোল</h3></div>
-                <div class="pump-buttons">
-                    <button id="pumpOnBtn" class="btn-control success"><i class="fas fa-play"></i> পাম্প চালু</button>
-                    <button id="pumpOffBtn" class="btn-control danger"><i class="fas fa-stop"></i> পাম্প বন্ধ</button>
-                </div>
-                <div class="mt-2">পাম্প: <strong id="pumpStatusText">বন্ধ</strong></div>
-            </div>
+            <button class="add-device-btn" onclick="window.addNewDevice()">
+                <i class="fas fa-plus"></i> নতুন ডিভাইস যোগ করুন
+            </button>
         </div>
     `;
     
-    setupControlListeners();
-    await loadCurrentControlStatus();
-    setupControlStatusListeners();
-}
-
-// ==================== ইভেন্ট লিসেনার সেটআপ ====================
-function setupControlListeners() {
-    document.getElementById('autoModeBtn')?.addEventListener('click', () => switchMode('auto'));
-    document.getElementById('manualModeBtn')?.addEventListener('click', () => switchMode('manual'));
-    document.getElementById('stopModeBtn')?.addEventListener('click', () => emergencyStop());
+    content.innerHTML = html;
     
-    document.getElementById('powerSolarBtn')?.addEventListener('click', () => setPowerSource('solar'));
-    document.getElementById('powerBatteryBtn')?.addEventListener('click', () => setPowerSource('battery'));
-    document.getElementById('powerGridBtn')?.addEventListener('click', () => setPowerSource('grid'));
-    document.getElementById('powerAllOffBtn')?.addEventListener('click', () => setPowerSource('off'));
-    
-    document.getElementById('brushForwardBtn')?.addEventListener('click', () => sendBrushCommand('forward'));
-    document.getElementById('brushReverseBtn')?.addEventListener('click', () => sendBrushCommand('reverse'));
-    document.getElementById('brushStopBtn')?.addEventListener('click', () => sendBrushCommand('stop'));
-    
-    document.getElementById('pumpOnBtn')?.addEventListener('click', () => sendPumpCommand('on'));
-    document.getElementById('pumpOffBtn')?.addEventListener('click', () => sendPumpCommand('off'));
-}
-
-// ==================== স্ট্যাটাস লিসেনার ====================
-function setupControlStatusListeners() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    onValue(systemStatusRef, (snapshot) => {
-        const status = snapshot.val();
-        if (status) {
-            updateControlStatusUI(status);
-            if (window.updatePowerFlowBySource) {
-                window.updatePowerFlowBySource(status.power_source);
-            }
-            
-            if (status.mode === 'auto' && !isAutoModeActive) {
-                startAutoMode();
-            } else if (status.mode !== 'auto' && isAutoModeActive) {
-                stopAutoMode();
-            }
-        }
+    // Device select click
+    document.querySelectorAll('.device-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const deviceId = card.dataset.deviceId;
+            window.switchDevice(deviceId);
+        });
     });
-    
-    const currentDataRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/current_data`);
-    onValue(currentDataRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-            updateBrushPumpStatus(data);
-            if (isAutoModeActive) {
-                updateAutoStatus('ডাটা প্রাপ্ত - বিশ্লেষণ করা হচ্ছে...', 'success');
-                // অটো ব্রাশ স্ট্যাটাস আপডেট
-                updateAutoBrushStatus(data);
-            }
-        }
-    });
-}
-
-// ==================== কারেন্ট স্ট্যাটাস লোড ====================
-async function loadCurrentControlStatus() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const snapshot = await get(statusRef);
-        if (snapshot.exists()) {
-            const status = snapshot.val();
-            updateControlStatusUI(status);
-            if (status.mode === 'auto') {
-                startAutoMode();
-            }
-        }
-    } catch (error) {
-        console.error("Error loading status:", error);
-    }
-}
-
-// ==================== UI আপডেট ফাংশন ====================
-function updateControlStatusUI(status) {
-    const mode = status.mode || 'manual';
-    const modeSpan = document.getElementById('currentModeStatus');
-    if (modeSpan) {
-        if (mode === 'auto') {
-            modeSpan.textContent = 'অটো';
-            modeSpan.className = 'badge auto';
-        } else if (mode === 'manual') {
-            modeSpan.textContent = 'ম্যানুয়াল';
-            modeSpan.className = 'badge manual';
-        } else if (mode === 'stop') {
-            modeSpan.textContent = 'জরুরি বন্ধ';
-            modeSpan.className = 'badge stop';
-        }
-    }
-    
-    const autoBtn = document.getElementById('autoModeBtn');
-    const manualBtn = document.getElementById('manualModeBtn');
-    const stopBtn = document.getElementById('stopModeBtn');
-    
-    if (autoBtn) autoBtn.classList.toggle('active', mode === 'auto');
-    if (manualBtn) manualBtn.classList.toggle('active', mode === 'manual');
-    if (stopBtn) stopBtn.classList.toggle('active', mode === 'stop');
-    
-    const powerSourceSection = document.getElementById('powerSourceSection');
-    const brushCard = document.getElementById('brushCard');
-    const pumpCard = document.getElementById('pumpCard');
-    const autoReasonDiv = document.getElementById('autoReason');
-    const autoReasonText = document.getElementById('autoReasonText');
-    const autoStatusDiv = document.getElementById('autoStatus');
-    const autoBrushStatusDiv = document.getElementById('autoBrushStatus');
-    
-    if (mode === 'manual') {
-        if (powerSourceSection) powerSourceSection.classList.remove('hidden');
-        if (brushCard) brushCard.classList.remove('hidden');
-        if (pumpCard) pumpCard.classList.remove('hidden');
-        if (autoReasonDiv) autoReasonDiv.classList.add('hidden');
-        if (autoStatusDiv) autoStatusDiv.classList.add('hidden');
-        if (autoBrushStatusDiv) autoBrushStatusDiv.classList.add('hidden');
-        
-        const brushModeText = document.getElementById('brushModeText');
-        if (brushModeText) {
-            brushModeText.textContent = 'ম্যানুয়াল';
-            brushModeText.style.color = '#f59e0b';
-        }
-        
-    } else if (mode === 'auto') {
-        if (powerSourceSection) powerSourceSection.classList.add('hidden');
-        if (brushCard) brushCard.classList.add('hidden');
-        if (pumpCard) pumpCard.classList.add('hidden');
-        if (autoReasonDiv) autoReasonDiv.classList.remove('hidden');
-        if (autoStatusDiv) autoStatusDiv.classList.remove('hidden');
-        if (autoBrushStatusDiv) autoBrushStatusDiv.classList.remove('hidden');
-        
-        if (status.last_switch_reason && autoReasonText) {
-            autoReasonText.innerHTML = status.last_switch_reason;
-        } else if (status.current_reason && autoReasonText) {
-            autoReasonText.innerHTML = status.current_reason;
-        } else if (autoReasonText) {
-            autoReasonText.innerHTML = '🤖 অটো মোড সক্রিয় - ব্রাশ স্বয়ংক্রিয়ভাবে কাজ করছে';
-        }
-        
-        updateAutoStatus('সিস্টেম মনিটরিং চলছে...', 'info');
-        
-    } else {
-        if (powerSourceSection) powerSourceSection.classList.add('hidden');
-        if (brushCard) brushCard.classList.add('hidden');
-        if (pumpCard) pumpCard.classList.add('hidden');
-        if (autoReasonDiv) autoReasonDiv.classList.add('hidden');
-        if (autoStatusDiv) autoStatusDiv.classList.add('hidden');
-        if (autoBrushStatusDiv) autoBrushStatusDiv.classList.add('hidden');
-    }
-    
-    if (mode === 'manual') {
-        const powerSource = status.power_source || 'grid';
-        const solarBtn = document.getElementById('powerSolarBtn');
-        const batteryBtn = document.getElementById('powerBatteryBtn');
-        const gridBtn = document.getElementById('powerGridBtn');
-        const offBtn = document.getElementById('powerAllOffBtn');
-        
-        [solarBtn, batteryBtn, gridBtn, offBtn].forEach(btn => {
-            if (btn) btn.classList.remove('active');
-        });
-        
-        if (powerSource === 'solar' && solarBtn) solarBtn.classList.add('active');
-        else if (powerSource === 'battery' && batteryBtn) batteryBtn.classList.add('active');
-        else if (powerSource === 'grid' && gridBtn) gridBtn.classList.add('active');
-        else if (powerSource === 'off' && offBtn) offBtn.classList.add('active');
-    }
-}
-
-function updateAutoStatus(message, type = 'info') {
-    const statusText = document.getElementById('autoStatusText');
-    const statusDiv = document.getElementById('autoStatus');
-    
-    if (!statusText || !statusDiv) return;
-    
-    statusText.textContent = message;
-    statusDiv.classList.remove('hidden');
-    
-    if (type === 'success') {
-        statusText.style.color = '#10b981';
-        statusDiv.querySelector('.fa-spin')?.classList.remove('fa-spin');
-    } else if (type === 'warning') {
-        statusText.style.color = '#f59e0b';
-        statusDiv.querySelector('.fa-spin')?.classList.add('fa-spin');
-    } else if (type === 'error') {
-        statusText.style.color = '#ef4444';
-        statusDiv.querySelector('.fa-spin')?.classList.remove('fa-spin');
-    } else {
-        statusText.style.color = '#60a5fa';
-        statusDiv.querySelector('.fa-spin')?.classList.add('fa-spin');
-    }
-}
-
-function updateAutoBrushStatus(data) {
-    const statusText = document.getElementById('autoBrushStatusText');
-    const statusDiv = document.getElementById('autoBrushStatus');
-    
-    if (!statusText || !statusDiv) return;
-    
-    const brushStatus = data.brush_status || 'stopped';
-    const cleaningStatus = data.cleaning_status || 'inactive';
-    
-    let status = '';
-    let color = '';
-    
-    if (cleaningStatus === 'active') {
-        if (brushStatus === 'forward') {
-            status = '🔄 ফরওয়ার্ড চলছে';
-            color = '#10b981';
-        } else if (brushStatus === 'reverse') {
-            status = '🔄 রিভার্স চলছে';
-            color = '#f59e0b';
-        } else {
-            status = '⏸ ব্রাশ বিরতি';
-            color = '#60a5fa';
-        }
-    } else if (cleaningStatus === 'paused') {
-        status = '⏸ বিরতিতে';
-        color = '#f59e0b';
-    } else {
-        status = '⏹ নিষ্ক্রিয়';
-        color = '#6b7280';
-    }
-    
-    statusText.textContent = `🧹 ${status}`;
-    statusText.style.color = color;
-    statusDiv.classList.remove('hidden');
-}
-
-function updateBrushPumpStatus(data) {
-    const modeSpan = document.getElementById('currentModeStatus');
-    const currentMode = modeSpan?.textContent || 'ম্যানুয়াল';
-    
-    if (currentMode === 'অটো' || currentMode === 'জরুরি বন্ধ') {
-        return;
-    }
-    
-    const brushStatus = data.brush_status || 'stopped';
-    const brushText = document.getElementById('brushStatusText');
-    if (brushText) {
-        if (brushStatus === 'forward') {
-            brushText.textContent = 'ফরওয়ার্ড';
-            brushText.style.color = '#10b981';
-        } else if (brushStatus === 'reverse') {
-            brushText.textContent = 'রিভার্স';
-            brushText.style.color = '#f59e0b';
-        } else {
-            brushText.textContent = 'বন্ধ';
-            brushText.style.color = '#ef4444';
-        }
-    }
-    
-    const pumpStatus = data.pump_status || 'off';
-    const pumpText = document.getElementById('pumpStatusText');
-    if (pumpText) {
-        pumpText.textContent = pumpStatus === 'on' ? 'চালু' : 'বন্ধ';
-        pumpText.style.color = pumpStatus === 'on' ? '#10b981' : '#ef4444';
-    }
-}
-
-// ==================== মোড স্যুইচ ====================
-async function switchMode(mode) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    const statusSnapshot = await get(statusRef);
-    const currentStatus = statusSnapshot.val() || {};
-    const currentMode = currentStatus.mode || 'manual';
-    
-    if (currentMode === mode) {
-        window.showNotification(`ইতিমধ্যে ${mode === 'auto' ? 'অটো' : 'ম্যানুয়াল'} মোডে আছেন`, 'info');
-        return;
-    }
-    
-    if (mode === 'auto' && currentMode === 'stop') {
-        const confirmReset = confirm(`⚠️ সিস্টেম জরুরি বন্ধ অবস্থায় আছে। রিসেট করে অটো মোডে যেতে চান?`);
-        if (!confirmReset) return;
-        await resetFromEmergencyStop('auto');
-        return;
-    }
-    
-    if (mode === 'auto' && currentStatus.power_source === 'off') {
-        window.showNotification('🔄 সিস্টেম রিসেট করে অটো মোডে যাচ্ছে...', 'info');
-        await resetFromEmergencyStop('auto');
-        return;
-    }
-    
-    try {
-        const command = buildCommand('set_mode', { mode });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        const brushMode = (mode === 'auto') ? 'auto' : 'manual';
-        const brushCommand = buildCommand('brush_control', {
-            command: mode === 'auto' ? 'auto_mode' : 'manual_mode',
-            mode: brushMode
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), brushCommand);
-        
-        await update(statusRef, { 
-            mode: mode, 
-            brush_mode: brushMode,
-            last_updated: Date.now(),
-            auto_mode_running: (mode === 'auto')
-        });
-        
-        if (mode === 'auto') {
-            await startAutoMode();
-            setTimeout(async () => {
-                await startCleaning();
-                performAutoCheck();
-            }, 1500);
-        } else {
-            stopAutoMode();
-            if (mode === 'manual') {
-                await update(statusRef, { power_source: 'grid' });
-                await sendBrushCommand('stop');
-            }
-        }
-        
-        const modeNames = { auto: 'অটো', manual: 'ম্যানুয়াল', stop: 'জরুরি বন্ধ' };
-        window.showNotification(`${modeNames[mode]} মোড চালু হয়েছে${mode === 'auto' ? ' - ব্রাশ স্বয়ংক্রিয়' : ''}`, 'success');
-        
-        if (mode === 'stop') {
-            await setPowerSourceOff('জরুরি বন্ধে সব পাওয়ার অফ');
-        }
-        
-        const updatedStatus = { 
-            mode: mode, 
-            power_source: currentStatus.power_source || 'grid',
-            brush_mode: (mode === 'auto') ? 'auto' : 'manual'
-        };
-        updateControlStatusUI(updatedStatus);
-        
-    } catch (error) {
-        console.error("Error switching mode:", error);
-        window.showNotification('মোড পরিবর্তনে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== পাওয়ার সোর্স টগল ====================
-async function setPowerSource(source) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    const statusSnapshot = await get(statusRef);
-    const currentStatus = statusSnapshot.val() || {};
-    const currentMode = currentStatus.mode || 'manual';
-    const currentSource = currentStatus.power_source || 'grid';
-    
-    if (currentSource === source && currentMode !== 'stop') {
-        await setPowerSourceOff('সোর্স অফ করা হয়েছে');
-        return;
-    }
-    
-    if (currentMode === 'stop') {
-        window.showNotification('⚠️ সিস্টেম জরুরি বন্ধ অবস্থায় আছে। আগে রিসেট করুন।', 'warning');
-        return;
-    }
-    
-    if (currentMode === 'auto') {
-        window.showNotification('⚠️ অটো মোডে পাওয়ার সোর্স পরিবর্তন করা যাবে না। ম্যানুয়াল মোডে সুইচ করুন।', 'warning');
-        return;
-    }
-    
-    let relay1 = false, relay2 = false, relay3 = false;
-    if (source === 'solar') relay1 = true;
-    else if (source === 'battery') relay2 = true;
-    else if (source === 'grid') relay3 = true;
-    
-    try {
-        const command = buildCommand('set_power_source', {
-            source: source,
-            relays: { relay1, relay2, relay3 },
-            toggle: true
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        await update(statusRef, { 
-            power_source: source, 
-            last_updated: Date.now(),
-            source_changed_by: 'manual'
-        });
-        
-        const names = { solar: '☀️ সোলার', battery: '🔋 ব্যাটারি', grid: '🏭 গ্রিড' };
-        window.showNotification(`${names[source]} চালু করা হয়েছে`, 'success');
-        
-        updateControlStatusUI({ 
-            mode: 'manual', 
-            power_source: source, 
-            brush_mode: currentStatus.brush_mode || 'manual' 
-        });
-        
-        if (window.updatePowerFlowBySource) {
-            window.updatePowerFlowBySource(source);
-        }
-        
-        await addControlAlert('info', `পাওয়ার সোর্স পরিবর্তন: ${names[source]}`);
-        
-    } catch (error) {
-        console.error("Error setting power source:", error);
-        window.showNotification('পাওয়ার সোর্স পরিবর্তনে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== সব পাওয়ার অফ ====================
-async function setPowerSourceOff(reason = 'ম্যানুয়ালি অফ করা হয়েছে') {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    
-    try {
-        const command = buildCommand('set_power_source', {
-            source: 'off',
-            relays: { relay1: false, relay2: false, relay3: false },
-            toggle: true
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        await update(statusRef, { 
-            power_source: 'off', 
-            last_updated: Date.now(),
-            source_changed_by: 'manual'
-        });
-        
-        window.showNotification('⚡ সব পাওয়ার সোর্স বন্ধ করা হয়েছে', 'warning');
-        
-        const statusSnapshot = await get(statusRef);
-        const currentStatus = statusSnapshot.val() || {};
-        updateControlStatusUI({ 
-            mode: 'manual', 
-            power_source: 'off', 
-            brush_mode: currentStatus.brush_mode || 'manual' 
-        });
-        
-        await addControlAlert('warning', reason);
-        
-    } catch (error) {
-        console.error("Error turning off power:", error);
-        window.showNotification('পাওয়ার অফ করতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== জরুরি বন্ধ ====================
-async function emergencyStop() {
-    if (!confirm('⚠️ সিস্টেম জরুরি বন্ধ করতে চান? সব রিলে বন্ধ হবে।')) return;
-    
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    try {
-        stopAutoMode();
-        
-        const command = buildCommand('emergency_stop', {
-            relays: { relay1: false, relay2: false, relay3: false },
-            reason: 'User initiated emergency stop'
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        await update(statusRef, { 
-            mode: 'stop', 
-            power_source: 'off', 
-            last_updated: Date.now(),
-            auto_mode_running: false,
-            brush_mode: 'manual',
-            current_reason: 'জরুরি বন্ধ করা হয়েছে'
-        });
-        
-        window.showNotification('⛔ সিস্টেম জরুরি বন্ধ করা হয়েছে', 'error');
-        await addControlAlert('error', 'সিস্টেম জরুরি বন্ধ করা হয়েছে');
-        updateControlStatusUI({ mode: 'stop', power_source: 'off', brush_mode: 'manual' });
-        
-    } catch (error) {
-        console.error("Error in emergency stop:", error);
-        window.showNotification('জরুরি বন্ধ করতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== ব্রাশ কমান্ড ====================
-async function sendBrushCommand(command) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    const modeSpan = document.getElementById('currentModeStatus');
-    if (modeSpan?.textContent === 'অটো' || modeSpan?.textContent === 'জরুরি বন্ধ') {
-        window.showNotification('অটো বা স্টপ মোডে ব্রাশ কন্ট্রোল করা যাবে না', 'warning');
-        return;
-    }
-    
-    try {
-        const cmd = buildCommand('brush_control', { command });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), cmd);
-        
-        const names = { forward: 'ফরওয়ার্ড', reverse: 'রিভার্স', stop: 'বন্ধ' };
-        window.showNotification(`ব্রাশ ${names[command] || command}`, 'success');
-    } catch (error) {
-        console.error("Error sending brush command:", error);
-        window.showNotification('ব্রাশ কমান্ড পাঠাতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== পাম্প কমান্ড ====================
-async function sendPumpCommand(state) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    const modeSpan = document.getElementById('currentModeStatus');
-    if (modeSpan?.textContent === 'অটো' || modeSpan?.textContent === 'জরুরি বন্ধ') {
-        window.showNotification('অটো বা স্টপ মোডে পাম্প কন্ট্রোল করা যাবে না', 'warning');
-        return;
-    }
-    
-    try {
-        const command = buildCommand('pump_control', { state });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        window.showNotification(`পাম্প ${state === 'on' ? 'চালু' : 'বন্ধ'} করা হয়েছে`, 'success');
-    } catch (error) {
-        console.error("Error sending pump command:", error);
-        window.showNotification('পাম্প কমান্ড পাঠাতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== ক্লিনিং কমান্ড ====================
-async function startCleaning() {
-    const settings = getCleaningSettings();
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    try {
-        const command = buildCommand('cleaning_control', {
-            mode: 'start',
-            duration: settings.duration,
-            interval: settings.interval,
-            cycles: settings.cycles,
-            breakTime: settings.breakTime
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        console.log(`🧹 Auto cleaning started: ${settings.duration}s × ${settings.cycles} cycles`);
-        
-        // অটো ব্রাশ স্ট্যাটাস আপডেট
-        const statusText = document.getElementById('autoBrushStatusText');
-        if (statusText) {
-            statusText.textContent = '🧹 ক্লিনিং শুরু - ব্রাশ চলছে';
-            statusText.style.color = '#10b981';
-        }
-        
-    } catch (error) {
-        console.error("Error starting cleaning:", error);
-    }
-}
-
-async function stopCleaning() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    try {
-        const command = buildCommand('cleaning_control', { mode: 'stop' });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        console.log('⏹ Auto cleaning stopped');
-        
-        const statusText = document.getElementById('autoBrushStatusText');
-        if (statusText) {
-            statusText.textContent = '⏹ ক্লিনিং বন্ধ';
-            statusText.style.color = '#ef4444';
-        }
-        
-    } catch (error) {
-        console.error("Error stopping cleaning:", error);
-    }
-}
-
-// ==================== অ্যালার্ট ====================
-async function addControlAlert(type, message) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    try {
-        const alertsRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/alerts`);
-        const newAlertRef = push(alertsRef);
-        await set(newAlertRef, { 
-            type, 
-            message, 
-            timestamp: new Date().toLocaleTimeString(), 
-            time: Date.now() 
-        });
-    } catch (error) {
-        console.error("Error adding alert:", error);
-    }
-}
-
-// ==================== স্মার্ট অটো মোড ====================
-let isAutoModeActive = false;
-let autoCheckInterval = null;
-let cleaningInterval = null;
-let dataTimeout = null;
-let lastDataReceived = 0;
-const DATA_TIMEOUT_MS = 15000;
-const CHECK_INTERVAL_MS = 5000;
-
-const AUTO_THRESHOLDS = {
-    SOLAR_MIN_VOLTAGE: 12.5,
-    SOLAR_GOOD_VOLTAGE: 13.0,
-    BATTERY_MIN_VOLTAGE: 11.8,
-    BATTERY_CRITICAL_SOC: 25,
-    BATTERY_GOOD_SOC: 40,
-    CHECK_INTERVAL: 5000
 };
 
-async function startAutoMode() {
-    if (autoCheckInterval) {
-        clearInterval(autoCheckInterval);
-        autoCheckInterval = null;
-    }
-    if (dataTimeout) {
-        clearTimeout(dataTimeout);
-        dataTimeout = null;
-    }
+// ==================== ✅ Switch Device ====================
+window.switchDevice = function(deviceId) {
+    if (!deviceId || !userDevices[deviceId]) return;
     
-    isAutoModeActive = true;
-    lastDataReceived = Date.now();
-    console.log("🤖 Smart auto mode started with brush control");
-    updateAutoStatus('অটো মোড শুরু - ডাটা মনিটরিং চলছে...', 'info');
+    // Save
+    localStorage.setItem('selectedDeviceId', deviceId);
     
-    // অটো ব্রাশ স্ট্যাটাস দেখান
-    const autoBrushDiv = document.getElementById('autoBrushStatus');
-    if (autoBrushDiv) {
-        autoBrushDiv.classList.remove('hidden');
-    }
+    // Update global
+    window.currentDeviceId = deviceId;
     
-    // অটো ক্লিনিং শুরু
-    const settings = getCleaningSettings();
-    const intervalMs = settings.interval * 60 * 60 * 1000;
+    // Reload page
+    showNotification('ডিভাইস পরিবর্তন হচ্ছে...', 'info');
+    setTimeout(() => {
+        window.location.reload();
+    }, 800);
+};
+
+// ==================== ✅ Add New Device ====================
+window.addNewDevice = function() {
+    const content = document.getElementById("content");
+    if (!content) return;
     
-    setTimeout(async () => {
-        if (isAutoModeActive) {
-            await startCleaning();
-            performAutoCheck();
-        }
-    }, 1500);
-    
-    // রেগুলার চেক ইন্টারভাল
-    autoCheckInterval = setInterval(() => {
-        if (isAutoModeActive) {
-            const now = Date.now();
-            const timeSinceLastData = now - lastDataReceived;
+    content.innerHTML = `
+        <div class="add-device-container">
+            <div class="add-device-header">
+                <i class="fas fa-plus-circle"></i>
+                <h2>নতুন ডিভাইস যোগ করুন</h2>
+                <p>ESP32 এর জন্য একটা নাম দিন</p>
+            </div>
             
-            if (timeSinceLastData > DATA_TIMEOUT_MS) {
-                updateAutoStatus(`⚠️ ${Math.round(timeSinceLastData/1000)}সেকেন্ড ডাটা পাওয়া যায়নি - গ্রিড মোডে`, 'warning');
-                switchToGridOnTimeout();
-            } else {
-                performAutoCheck();
-            }
-        }
-    }, CHECK_INTERVAL_MS);
-    
-    // ক্লিনিং ইন্টারভাল
-    if (cleaningInterval) {
-        clearInterval(cleaningInterval);
-        cleaningInterval = null;
-    }
-    
-    cleaningInterval = setInterval(() => {
-        if (isAutoModeActive) {
-            console.log('🧹 Scheduled cleaning starting...');
-            startCleaning();
-        }
-    }, intervalMs);
-}
+            <div class="add-device-form">
+                <div class="form-group">
+                    <label>প্রজেক্টের নাম</label>
+                    <input type="text" id="newDeviceName" placeholder="যেমন: ঘরের সোলার সিস্টেম">
+                    <small>এই নাম দিয়ে আপনি ডিভাইস চিনবেন</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>ESP32 Device ID (ESP32 থেকে)</label>
+                    <input type="text" id="newDeviceId" placeholder="ESP32_XXXX (ESP32 Serial Monitor দেখুন)">
+                    <small>ESP32 এর Serial Monitor এ "Device ID: xxx" দেখুন</small>
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-cancel" onclick="window.showDeviceSelector()">বাতিল</button>
+                    <button class="btn-save" onclick="window.saveNewDevice()">সংরক্ষণ</button>
+                </div>
+            </div>
+        </div>
+    `;
+};
 
-function stopAutoMode() {
-    if (autoCheckInterval) {
-        clearInterval(autoCheckInterval);
-        autoCheckInterval = null;
-    }
-    if (cleaningInterval) {
-        clearInterval(cleaningInterval);
-        cleaningInterval = null;
-    }
-    if (dataTimeout) {
-        clearTimeout(dataTimeout);
-        dataTimeout = null;
-    }
-    isAutoModeActive = false;
-    console.log("🛑 Auto mode stopped");
+// ==================== ✅ Save New Device ====================
+window.saveNewDevice = async function() {
+    const deviceName = document.getElementById('newDeviceName')?.value?.trim();
+    const deviceId = document.getElementById('newDeviceId')?.value?.trim();
     
-    stopCleaning();
-    
-    const autoStatusDiv = document.getElementById('autoStatus');
-    if (autoStatusDiv) autoStatusDiv.classList.add('hidden');
-    
-    const autoBrushDiv = document.getElementById('autoBrushStatus');
-    if (autoBrushDiv) autoBrushDiv.classList.add('hidden');
-}
-
-// ==================== টাইমআউট হলে গ্রিডে সুইচ ====================
-async function switchToGridOnTimeout() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId || !isAutoModeActive) return;
-    
-    try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const statusSnapshot = await get(statusRef);
-        const currentStatus = statusSnapshot.val() || {};
-        const currentSource = currentStatus.power_source || 'grid';
-        
-        if (currentSource === 'grid') {
-            updateAutoStatus('✅ গ্রিড মোডে রয়েছে - ডাটা আসার অপেক্ষায়', 'success');
-            return;
-        }
-        
-        console.log('⏰ Data timeout - Switching to grid');
-        updateAutoStatus('⏰ ডাটা টাইমআউট - গ্রিডে সুইচ করা হচ্ছে...', 'warning');
-        
-        const command = buildCommand('set_power_source', {
-            source: 'grid',
-            relays: { relay1: false, relay2: false, relay3: true },
-            reason: 'Data timeout - switching to grid',
-            auto_switch: true
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        await update(statusRef, {
-            power_source: 'grid',
-            last_updated: Date.now(),
-            current_reason: `⏰ ${Math.round((Date.now() - lastDataReceived)/1000)}সেকেন্ড ডাটা পাওয়া যায়নি - গ্রিডে সুইচ`
-        });
-        
-        const autoReasonText = document.getElementById('autoReasonText');
-        if (autoReasonText) {
-            autoReasonText.innerHTML = `⏰ ডাটা টাইমআউট - গ্রিডে সুইচ করা হয়েছে`;
-        }
-        
-        await addControlAlert('warning', `ডাটা টাইমআউট - গ্রিডে সুইচ`);
-        
-    } catch (error) {
-        console.error("Error switching to grid on timeout:", error);
-    }
-}
-
-// ==================== অটো চেক ====================
-async function performAutoCheck() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId || !isAutoModeActive) {
-        if (isAutoModeActive) stopAutoMode();
+    if (!deviceName) {
+        showNotification('ডিভাইসের নাম দিন', 'error');
         return;
     }
     
+    if (!deviceId) {
+        showNotification('Device ID দিন', 'error');
+        return;
+    }
+    
+    // Save to Firebase
     try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const statusSnapshot = await get(statusRef);
-        const currentStatus = statusSnapshot.val() || {};
-        const currentMode = currentStatus.mode || 'manual';
+        const devicePath = `Devices/${window.currentUserId}/${deviceId}`;
+        const deviceRef = ref(database, devicePath);
         
-        if (currentMode !== 'auto') {
-            if (isAutoModeActive) stopAutoMode();
+        const snapshot = await get(deviceRef);
+        if (snapshot.exists()) {
+            showNotification('এই Device ID আগেই যোগ আছে', 'warning');
             return;
         }
         
-        const currentDataRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/current_data`);
-        const dataSnapshot = await get(currentDataRef);
-        const data = dataSnapshot.val();
+        // Create device
+        await set(deviceRef, {
+            device_name: deviceName,
+            user_id: window.currentUserId,
+            user_email: window.userEmail,
+            created_at: Date.now(),
+            status: 'active'
+        });
         
-        if (!data) {
-            const timeSinceLastData = Date.now() - lastDataReceived;
-            if (timeSinceLastData > DATA_TIMEOUT_MS) {
-                updateAutoStatus(`⏰ ${Math.round(timeSinceLastData/1000)}সেকেন্ড ডাটা পাওয়া যায়নি`, 'warning');
-            }
-            return;
+        // Create data structure
+        await ensureDataStructure(devicePath);
+        
+        // Update local list
+        userDevices[deviceId] = { device_name: deviceName, created_at: Date.now() };
+        
+        showNotification('ডিভাইস যোগ হয়েছে ✅', 'success');
+        
+        // Switch to new device
+        setTimeout(() => {
+            window.switchDevice(deviceId);
+        }, 1000);
+        
+    } catch (error) {
+        console.error("Add device error:", error);
+        showNotification('ডিভাইস যোগ করতে সমস্যা ❌', 'error');
+    }
+};
+
+// ==================== Navigation ====================
+function navigateTo(page) {
+    const buttons = document.querySelectorAll(".nav-btn");
+    const indicator = document.querySelector(".indicator");
+
+    buttons.forEach(btn => btn.classList.remove("active"));
+
+    const targetBtn = document.querySelector(`[data-page="${page}"]`);
+    if (targetBtn) {
+        targetBtn.classList.add("active");
+        if (indicator) {
+            indicator.style.width = targetBtn.offsetWidth + "px";
+            indicator.style.left = targetBtn.offsetLeft + "px";
         }
+    }
+
+    const dropdown = document.getElementById("dropdown");
+    if (dropdown) dropdown.style.display = "none";
+
+    switch(page) {
+        case "dashboard": loadDashboard(); break;
+        case "control": loadControl(); break;
+        case "analysis": loadAnalysis(); break;
+        case "profile": loadProfile(); break;
+        default: loadDashboard();
+    }
+}
+
+window.navigateTo = navigateTo;
+
+// ==================== AUTH STATE OBSERVER ====================
+onAuthStateChanged(auth, async (user) => {
+    console.log("Auth state:", user ? user.email : "No user");
+    
+    if (user) {
+        currentUser = user;
+        updateAuthStatus(`✅ স্বাগতম, ${user.email.split('@')[0]}!`);
         
-        lastDataReceived = Date.now();
-        updateAutoStatus('✅ ডাটা প্রাপ্ত - বিশ্লেষণ করা হচ্ছে...', 'success');
-        
-        const solarVoltage = parseFloat(data.solar_voltage) || 0;
-        const batteryVoltage = parseFloat(data.battery_voltage) || 0;
-        const batterySOC = parseFloat(data.battery_soc) || 0;
-        const currentSource = currentStatus.power_source || 'grid';
-        
-        let targetSource = null;
-        let reason = '';
-        let shouldSwitch = false;
-        
-        // ========== স্মার্ট সুইচিং লজিক ==========
-        
-        if (currentSource === 'grid') {
-            if (solarVoltage >= AUTO_THRESHOLDS.SOLAR_GOOD_VOLTAGE) {
-                targetSource = 'solar';
-                reason = `☀️ সোলার ভালো (${solarVoltage.toFixed(1)}V) → সোলার চালু`;
-                shouldSwitch = true;
-            } 
-            else if (batterySOC >= AUTO_THRESHOLDS.BATTERY_GOOD_SOC && batteryVoltage >= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                targetSource = 'battery';
-                reason = `🔋 ব্যাটারি ভালো (${batterySOC.toFixed(0)}%, ${batteryVoltage.toFixed(1)}V) → ব্যাটারি চালু`;
-                shouldSwitch = true;
-            }
-            else {
-                reason = `🏭 গ্রিড চলছে (সোলার: ${solarVoltage.toFixed(1)}V, ব্যাটারি: ${batterySOC.toFixed(0)}%)`;
-                updateAutoStatus(reason, 'info');
-            }
-        } 
-        else if (currentSource === 'solar') {
-            const isSolarGood = solarVoltage >= AUTO_THRESHOLDS.SOLAR_MIN_VOLTAGE;
+        try {
+            deviceManager = new DeviceManager();
             
-            if (!isSolarGood) {
-                if (batterySOC >= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC && batteryVoltage >= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                    targetSource = 'battery';
-                    reason = `☀️ সোলার কম (${solarVoltage.toFixed(1)}V) → 🔋 ব্যাটারি চালু (${batterySOC.toFixed(0)}%)`;
-                    shouldSwitch = true;
-                } 
-                else {
-                    targetSource = 'grid';
-                    reason = `☀️ সোলার কম (${solarVoltage.toFixed(1)}V) ও 🔋 ব্যাটারি কম (${batterySOC.toFixed(0)}%) → 🏭 গ্রিড চালু`;
-                    shouldSwitch = true;
+            const urlParams = new URLSearchParams(window.location.search);
+            const userName = urlParams.get('userName') || user.displayName || "";
+            
+            const userData = { userName: userName };
+            
+            const success = await deviceManager.initialize(user, userData);
+            
+            if (success) {
+                currentDeviceId = deviceManager.getCurrentDeviceId();
+                currentUserId = deviceManager.getCurrentUserId();
+                
+                window.deviceManager = deviceManager;
+                window.currentDeviceId = currentDeviceId;
+                window.currentUserId = currentUserId;
+                window.currentUserEmail = user.email;
+                
+                // ✅ যদি ১টার বেশি device থাকে → selector দেখান
+                if (Object.keys(userDevices).length > 1) {
+                    setTimeout(() => {
+                        hideAuthLoadingScreen();
+                        window.showDeviceSelector();
+                    }, 500);
+                } else {
+                    // ১টি device → সরাসরি dashboard
+                    if (typeof setupSettings === 'function') setupSettings();
+                    setTimeout(() => {
+                        hideAuthLoadingScreen();
+                        navigateTo("dashboard");
+                    }, 500);
                 }
-            } 
-            else if (batterySOC <= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC) {
-                targetSource = 'grid';
-                reason = `🔋 ব্যাটারি কম (${batterySOC.toFixed(0)}%) → 🏭 গ্রিড চালু`;
-                shouldSwitch = true;
             }
-            else {
-                reason = `☀️ সোলার চলছে (${solarVoltage.toFixed(1)}V, ব্যাটারি: ${batterySOC.toFixed(0)}%)`;
-                updateAutoStatus(reason, 'info');
-            }
-        } 
-        else if (currentSource === 'battery') {
-            if (solarVoltage >= AUTO_THRESHOLDS.SOLAR_GOOD_VOLTAGE) {
-                targetSource = 'solar';
-                reason = `☀️ সোলার ভালো (${solarVoltage.toFixed(1)}V) → সোলার চালু`;
-                shouldSwitch = true;
-            } 
-            else if (batterySOC <= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC || batteryVoltage <= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                targetSource = 'grid';
-                reason = `🔋 ব্যাটারি কম (${batterySOC.toFixed(0)}%, ${batteryVoltage.toFixed(1)}V) → 🏭 গ্রিড চালু`;
-                shouldSwitch = true;
-            }
-            else {
-                reason = `🔋 ব্যাটারি চলছে (${batterySOC.toFixed(0)}%, ${batteryVoltage.toFixed(1)}V)`;
-                updateAutoStatus(reason, 'info');
-            }
+        } catch (error) {
+            console.error("Initialization error:", error);
+            showNotification("সিস্টেম ইনিশিয়ালাইজ ব্যর্থ: " + error.message, "error");
         }
-        
-        const autoReasonDiv = document.getElementById('autoReason');
-        const autoReasonText = document.getElementById('autoReasonText');
-        
-        if (autoReasonDiv && autoReasonText && reason) {
-            autoReasonDiv.classList.remove('hidden');
-            autoReasonText.innerHTML = reason;
-            await update(statusRef, { current_reason: reason });
-        }
-        
-        if (shouldSwitch && targetSource && targetSource !== currentSource) {
-            await executeAutoSwitch(targetSource, reason);
-        }
-        
-    } catch (error) {
-        console.error("❌ Auto check error:", error);
-        updateAutoStatus('❌ চেক করতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== অটো সুইচ ====================
-async function executeAutoSwitch(targetSource, reason) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    const now = Date.now();
-    if (window.lastAutoSwitchTime && (now - window.lastAutoSwitchTime) < 10000) {
-        console.log("⏳ Auto switch cooldown active");
-        updateAutoStatus('⏳ সুইচ কুলডাউন - অপেক্ষা করুন', 'warning');
-        return;
-    }
-    window.lastAutoSwitchTime = now;
-    
-    let relay1 = false, relay2 = false, relay3 = false;
-    if (targetSource === 'solar') relay1 = true;
-    else if (targetSource === 'battery') relay2 = true;
-    else if (targetSource === 'grid') relay3 = true;
-    
-    try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const statusSnapshot = await get(statusRef);
-        const currentSource = statusSnapshot.val()?.power_source || 'unknown';
-        
-        updateAutoStatus(`🔄 ${targetSource} এ সুইচ করা হচ্ছে...`, 'info');
-        
-        const command = buildCommand('set_power_source', {
-            source: targetSource,
-            relays: { relay1, relay2, relay3 },
-            reason: reason,
-            auto_switch: true
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), command);
-        
-        await update(statusRef, {
-            power_source: targetSource,
-            last_updated: now,
-            last_switch_reason: reason,
-            current_reason: reason,
-            last_auto_switch: {
-                from: currentSource,
-                to: targetSource,
-                reason: reason,
-                time: now
-            }
-        });
-        
-        const sourceNames = { solar: '☀️ সোলার', battery: '🔋 ব্যাটারি', grid: '🏭 গ্রিড' };
-        window.showNotification(`🔄 অটো সুইচ: ${sourceNames[targetSource]}`, 'info');
-        updateAutoStatus(`✅ ${sourceNames[targetSource]} এ সুইচ করা হয়েছে`, 'success');
-        
-        const autoReasonDiv = document.getElementById('autoReason');
-        const autoReasonText = document.getElementById('autoReasonText');
-        if (autoReasonDiv && autoReasonText) {
-            autoReasonDiv.classList.remove('hidden');
-            autoReasonText.innerHTML = reason;
-        }
-        
-        if (window.updatePowerFlowBySource) {
-            window.updatePowerFlowBySource(targetSource);
-        }
-        
-        await addControlAlert('info', `অটো সুইচ: ${reason}`);
-        
-    } catch (error) {
-        console.error("❌ Auto switch error:", error);
-        updateAutoStatus('❌ সুইচ করতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== সিস্টেম রিসেট ====================
-async function resetFromEmergencyStop(targetMode) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    window.showNotification('🔄 সিস্টেম রিসেট করা হচ্ছে...', 'info');
-    
-    try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        
-        const brushMode = (targetMode === 'auto') ? 'auto' : 'manual';
-        const updateData = {
-            mode: targetMode,
-            power_source: 'grid',
-            brush_mode: brushMode,
-            last_updated: Date.now(),
-            auto_mode_running: (targetMode === 'auto'),
-            current_reason: targetMode === 'auto' ? 'ইমার্জেন্সি স্টপ থেকে রিসেট করে অটো মোড চালু' : 'ইমার্জেন্সি স্টপ থেকে রিসেট করে ম্যানুয়াল মোড চালু'
-        };
-        
-        await update(statusRef, updateData);
-        
-        const resetCommand = buildCommand('reset_system', {
-            mode: targetMode,
-            emergency_reset: true,
-            reason: `Reset from emergency stop to ${targetMode} mode`
-        });
-        await set(ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/commands`), resetCommand);
-        
-        if (isAutoModeActive) {
-            stopAutoMode();
-        }
-        
-        if (targetMode === 'auto') {
-            setTimeout(async () => {
-                await startAutoMode();
-                setTimeout(() => performAutoCheck(), 1000);
-                window.showNotification('✅ অটো মোডে রিসেট সম্পূর্ণ - ব্রাশ স্বয়ংক্রিয়', 'success');
-            }, 500);
-        } else {
-            window.showNotification('✅ ম্যানুয়াল মোডে রিসেট সম্পূর্ণ', 'success');
-        }
-        
-        await addControlAlert('info', `সিস্টেম রিসেট করা হয়েছে (${targetMode} মোড)`);
-        
-        const updatedStatus = { 
-            mode: targetMode, 
-            power_source: 'grid',
-            brush_mode: brushMode,
-            current_reason: updateData.current_reason
-        };
-        updateControlStatusUI(updatedStatus);
-        
-    } catch (error) {
-        console.error("Error resetting from emergency stop:", error);
-        window.showNotification('❌ সিস্টেম রিসেট করতে সমস্যা হয়েছে', 'error');
-    }
-}
-
-// ==================== হেল্পার ফাংশন ====================
-function forceAutoCheck() {
-    if (isAutoModeActive) {
-        console.log("🔄 Forcing auto check...");
-        lastDataReceived = 0;
-        performAutoCheck();
     } else {
-        console.log("❌ Auto mode is not active");
+        setTimeout(() => window.location.href = "login.html", 1500);
     }
+});
+
+// ==================== EVENT LISTENERS ====================
+document.addEventListener("DOMContentLoaded", () => {
+    initAuthLoadingScreen();
+    
+    if (!document.getElementById("toast")) {
+        const toast = document.createElement("div");
+        toast.id = "toast";
+        toast.className = "toast";
+        document.body.appendChild(toast);
+    }
+    
+    document.querySelectorAll(".nav-btn").forEach(btn => {
+        btn.addEventListener("click", function() {
+            const page = this.getAttribute("data-page");
+            if (page) navigateTo(page);
+        });
+    });
+    
+    const menuBtn = document.getElementById("menuBtn");
+    const dropdown = document.getElementById("dropdown");
+    if (menuBtn && dropdown) {
+        menuBtn.addEventListener("click", (e) => { 
+            e.stopPropagation(); 
+            dropdown.style.display = dropdown.style.display === "block" ? "none" : "block"; 
+        });
+    }
+    
+    document.addEventListener("click", () => { 
+        if (dropdown) dropdown.style.display = "none"; 
+    });
+    
+    // ✅ Device Selector Menu
+    document.getElementById("deviceMenuBtn")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        window.showDeviceSelector();
+    });
+    
+    document.getElementById("profileMenuBtn")?.addEventListener("click", (e) => { 
+        e.preventDefault();
+        navigateTo("profile"); 
+    });
+    document.getElementById("settingsMenuBtn")?.addEventListener("click", (e) => { 
+        e.preventDefault();
+        navigateTo("settings"); 
+    });
+    document.getElementById("logoutMenuBtn")?.addEventListener("click", async () => {
+        if (confirm("লগআউট করবেন?")) {
+            localStorage.removeItem('selectedDeviceId');
+            if (deviceManager) deviceManager.cleanup();
+            await signOut(auth);
+            window.location.href = "login.html";
+        }
+    });
+});
+
+// ==================== CLOCK ====================
+function updateClock() {
+    const now = new Date();
+    const timeEl = document.getElementById("time");
+    const dateEl = document.getElementById("date");
+    if (timeEl) timeEl.textContent = now.toLocaleTimeString("bn-BD", { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (dateEl) dateEl.textContent = now.toLocaleDateString("bn-BD", { year: "numeric", month: "long", day: "numeric" });
 }
+setInterval(updateClock, 1000);
+updateClock();
 
-// ==================== গ্লোবাল এক্সপোর্ট ====================
-window.startAutoMode = startAutoMode;
-window.stopAutoMode = stopAutoMode;
-window.performAutoCheck = performAutoCheck;
-window.forceAutoCheck = forceAutoCheck;
-window.resetFromEmergencyStop = resetFromEmergencyStop;
-window.addControlAlert = addControlAlert;
-window.buildCommand = buildCommand;
-window.switchMode = switchMode;
-window.setPowerSource = setPowerSource;
-window.setPowerSourceOff = setPowerSourceOff;
-window.emergencyStop = emergencyStop;
-window.getCleaningSettings = getCleaningSettings;
-window.startCleaning = startCleaning;
-window.stopCleaning = stopCleaning;
-window.sendBrushCommand = sendBrushCommand;
-window.sendPumpCommand = sendPumpCommand;
-window.updateAutoStatus = updateAutoStatus;
-window.updateAutoBrushStatus = updateAutoBrushStatus;
-
-console.log("✅ Control.js loaded - Auto mode with brush control fully integrated");
+console.log("✅ Main.js v12.0 - Multiple ESP32 Support");
