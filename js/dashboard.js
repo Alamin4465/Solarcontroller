@@ -1,4 +1,4 @@
-// js/dashboard.js - ক্লিনিং স্ট্যাটাস ডট ইন্ডিকেটর সহ
+// js/dashboard.js - Charging Status শুধু Status Bar-এ
 
 export async function loadDashboard() {
     const content = document.getElementById("content");
@@ -8,16 +8,33 @@ export async function loadDashboard() {
     const currentUserId = window.currentUserId;
     const currentDeviceId = window.currentDeviceId;
     
+    const networkStatus = document.getElementById('network_status');
+    if (networkStatus) {
+        if (!database || !currentUserId || !currentDeviceId) {
+            networkStatus.textContent = '⏳ কনফিগার হচ্ছে...';
+            networkStatus.className = 'network-status configuring';
+            networkStatus.style.color = '#f59e0b';
+        } else {
+            networkStatus.textContent = '✅ কানেক্টেড';
+            networkStatus.className = 'network-status connected';
+            networkStatus.style.color = '#10b981';
+        }
+    }
+    
     if (!database || !currentUserId || !currentDeviceId) {
-        content.innerHTML = `<div class="card text-center"><p>🔴 ডিভাইস সিলেক্ট করুন</p></div>`;
+        content.innerHTML = `
+            <div class="card text-center">
+                <p>🔴 ডিভাইস সিলেক্ট করুন</p>
+            </div>
+        `;
         return;
     }
     
     content.innerHTML = `
-        <!-- ================= SAFETY ALERT (শুধু নোটিফিকেশন) ================= -->
+        <!-- SAFETY ALERT -->
         <div id="safety_alert" class="safety-alert"></div>
 
-        <!-- ================= STATUS BAR ================= -->
+        <!-- STATUS BAR -->
         <div class="status-bar">
             <div class="status-item">
                 <div class="status-item-left">
@@ -35,17 +52,7 @@ export async function loadDashboard() {
                     <span class="status-label">নেটওয়ার্ক:</span>
                 </div>
                 <div class="status-value">
-                    <span id="network_status" class="network-status connected">কানেক্টেড</span>
-                </div>
-            </div>
-            
-            <div class="status-item">
-                <div class="status-item-left">
-                    <i class="fas fa-wind"></i>
-                    <span class="status-label">ধুলা:</span>
-                </div>
-                <div class="status-value">
-                    <span id="dust">0 μg/m³</span>
+                    <span id="network_status" class="network-status connected">✅ কানেক্টেড</span>
                 </div>
             </div>
             
@@ -55,22 +62,21 @@ export async function loadDashboard() {
                     <span class="status-label">দক্ষতা:</span>
                 </div>
                 <div class="status-value">
-                    <span id="efficiency">0 %</span>
+                    <span id="efficiency">-- %</span>
                 </div>
             </div>
             
             <div class="status-item">
                 <div class="status-item-left">
                     <i class="fas fa-battery-half"></i>
-                    <span class="status-label">ব্যাটারি :</span>
+                    <span class="status-label">ব্যাটারি:</span>
                 </div>
                 <div class="status-value">
-                    <i class="fas fa-bolt" id="chargingIndicator" style="display: none;"></i>
                     <span id="battery_soc" class="battery_percentage">0%</span>
+                    <span id="battery_charge_status" class="charge-status normal">⚪ স্বাভাবিক</span>
                 </div>
             </div>
             
-            <!-- ================= ক্লিনিং স্ট্যাটাস (ডট ইন্ডিকেটর সহ) ================= -->
             <div class="status-item">
                 <div class="status-item-left">
                     <i class="fas fa-brush"></i>
@@ -83,7 +89,7 @@ export async function loadDashboard() {
             </div>
         </div>
 
-        <!-- ================= BATTERY STATUS ================= -->
+        <!-- BATTERY STATUS CARD -->
         <div class="battery-status-card">
             <div class="card-header">
                 <h3><i class="fas fa-battery-full"></i> ব্যাটারি স্ট্যাটাস</h3>
@@ -99,11 +105,7 @@ export async function loadDashboard() {
                             <div id="batteryProgressBar" class="battery-progress-bar" style="width: 0%"></div>
                         </div>
                         <div class="battery-labels">
-                            <span>0%</span>
-                            <span>25%</span>
-                            <span>50%</span>
-                            <span>75%</span>
-                            <span>100%</span>
+                            <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
                         </div>
                     </div>
                     <div class="battery-info-row">
@@ -120,36 +122,27 @@ export async function loadDashboard() {
             </div>
         </div>
         
-        <!-- ================= CURRENT SOURCE ================= -->
+        <!-- CURRENT SOURCE -->
         <div class="current-source-wrapper">
             <span class="current-source-label">বর্তমান সোর্স:</span>
             <span id="currentSourceSpan" class="current-source solar">সোলার → ব্যাটারি → লোড</span>
         </div>
         
-        <!-- ================= POWER FLOW SVG DIAGRAM ================= -->
+        <!-- POWER FLOW SVG -->
         <div class="power-flow-wrapper">
             <svg viewBox="0 0 500 550" width="100%" height="100%" class="power-flow-svg">
                 <defs>
                     <filter id="glowSolar" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="4" result="blur"/>
-                        <feMerge>
-                            <feMergeNode in="blur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
                     </filter>
                     <filter id="glowGrid" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="4" result="blur"/>
-                        <feMerge>
-                            <feMergeNode in="blur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
                     </filter>
                     <filter id="glowBattery" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="4" result="blur"/>
-                        <feMerge>
-                            <feMergeNode in="blur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
                     </filter>
                     <style>
                         @keyframes flowMove {
@@ -159,7 +152,6 @@ export async function loadDashboard() {
                     </style>
                 </defs>
                 
-                <!-- Static Lines -->
                 <line x1="140" y1="180" x2="140" y2="220" stroke="#334155" stroke-width="4"/>
                 <line x1="140" y1="220" x2="250" y2="220" stroke="#334155" stroke-width="4"/>
                 <line x1="360" y1="180" x2="360" y2="220" stroke="#334155" stroke-width="4"/>
@@ -167,56 +159,33 @@ export async function loadDashboard() {
                 <line x1="250" y1="220" x2="250" y2="280" stroke="#334155" stroke-width="4"/>
                 <line x1="250" y1="400" x2="250" y2="450" stroke="#334155" stroke-width="4"/>
                 
-                <!-- Animated Flow Lines -->
-                <path id="solarToBatteryFlow" 
-                      d="M140 180 L140 220 L250 220 L250 280" 
-                      stroke="#f97316" stroke-width="5" fill="none"
-                      stroke-dasharray="12 18" stroke-linecap="round"
-                      style="display: none;"/>
+                <path id="solarToBatteryFlow" d="M140 180 L140 220 L250 220 L250 280" stroke="#f97316" stroke-width="5" fill="none" stroke-dasharray="12 18" stroke-linecap="round" style="display: none;"/>
+                <path id="gridToBatteryFlow" d="M360 180 L360 220 L250 220 L250 280" stroke="#3b82f6" stroke-width="5" fill="none" stroke-dasharray="12 18" stroke-linecap="round" style="display: none;"/>
+                <line id="batteryToLoadFlow" x1="250" y1="400" x2="250" y2="450" stroke="#10b981" stroke-width="5" stroke-dasharray="12 18" stroke-linecap="round" style="display: none;"/>
                 
-                <path id="gridToBatteryFlow" 
-                      d="M360 180 L360 220 L250 220 L250 280" 
-                      stroke="#3b82f6" stroke-width="5" fill="none"
-                      stroke-dasharray="12 18" stroke-linecap="round"
-                      style="display: none;"/>
-                
-                <line id="batteryToLoadFlow" 
-                      x1="250" y1="400" x2="250" y2="450" 
-                      stroke="#10b981" stroke-width="5"
-                      stroke-dasharray="12 18" stroke-linecap="round"
-                      style="display: none;"/>
-                
-                <!-- SOLAR BOX -->
                 <g id="solarGroup">
-                    <rect id="solarBox" x="70" y="90" width="140" height="90" rx="16"
-                          fill="#1e293b" stroke="#334155" stroke-width="3"/>
+                    <rect id="solarBox" x="70" y="90" width="140" height="90" rx="16" fill="#1e293b" stroke="#334155" stroke-width="3"/>
                     <text x="140" y="125" text-anchor="middle" font-size="32">☀️</text>
                     <text x="140" y="150" text-anchor="middle" fill="#e2e8f0" font-size="16" font-weight="bold">SOLAR</text>
                     <text id="solarVoltageText" x="140" y="168" text-anchor="middle" fill="#64748b" font-size="12">0.0 V</text>
                 </g>
                 
-                <!-- GRID BOX -->
                 <g id="gridGroup">
-                    <rect id="gridBox" x="290" y="90" width="140" height="90" rx="16"
-                          fill="#1e293b" stroke="#334155" stroke-width="3"/>
+                    <rect id="gridBox" x="290" y="90" width="140" height="90" rx="16" fill="#1e293b" stroke="#334155" stroke-width="3"/>
                     <text x="360" y="125" text-anchor="middle" font-size="32">🏭</text>
                     <text x="360" y="150" text-anchor="middle" fill="#e2e8f0" font-size="16" font-weight="bold">GRID</text>
                     <text id="gridStatusText" x="360" y="168" text-anchor="middle" fill="#64748b" font-size="12">স্ট্যান্ডবাই</text>
                 </g>
                 
-                <!-- BATTERY BOX -->
                 <g id="batteryGroup">
-                    <rect id="batteryBox" x="145" y="280" width="210" height="120" rx="20"
-                          fill="#1e293b" stroke="#10b981" stroke-width="4"/>
+                    <rect id="batteryBox" x="145" y="280" width="210" height="120" rx="20" fill="#1e293b" stroke="#10b981" stroke-width="4"/>
                     <text x="250" y="320" text-anchor="middle" font-size="36">🔋</text>
                     <text x="250" y="350" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="bold">BATTERY</text>
                     <text id="batteryPercentageText" x="250" y="382" text-anchor="middle" fill="#10b981" font-size="26" font-weight="bold">0%</text>
                 </g>
                 
-                <!-- LOAD BOX -->
                 <g id="loadGroup">
-                    <rect id="loadBox" x="170" y="450" width="160" height="80" rx="16"
-                          fill="#1e293b" stroke="#06b6d4" stroke-width="3"/>
+                    <rect id="loadBox" x="170" y="450" width="160" height="80" rx="16" fill="#1e293b" stroke="#06b6d4" stroke-width="3"/>
                     <text x="250" y="482" text-anchor="middle" font-size="28">⚡</text>
                     <text x="250" y="508" text-anchor="middle" fill="#e2e8f0" font-size="16" font-weight="bold">LOAD</text>
                     <text id="loadPowerText" x="250" y="522" text-anchor="middle" fill="#64748b" font-size="11">0 W</text>
@@ -227,12 +196,113 @@ export async function loadDashboard() {
     
     setupDashboardListeners();
     await fetchDashboardData();
-    
-    // সেফটি অ্যালার্ট নোটিফিকেশন সেটআপ
     setupSafetyAlertNotification();
 }
 
-// ==================== সেফটি অ্যালার্ট নোটিফিকেশন ====================
+// ==================== SOC CALCULATION ====================
+// 11.0V = 0%, 13.7V = 100%
+function calculateSOC(voltage) {
+    let soc = ((voltage - 11.0) / 2.7) * 100;
+    return Math.max(0, Math.min(100, soc));
+}
+
+// ==================== BATTERY CHARGING STATUS ====================
+function getBatteryChargeStatus(data) {
+    const batterySOC = parseFloat(data.battery_soc) || 0;
+    const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+    const batteryCurrent = parseFloat(data.battery_current) || 0;
+    const solarCurrent = parseFloat(data.solar_current) || 0;
+    const solarVoltage = parseFloat(data.solar_voltage) || 0;
+    
+    const isCharging = (solarVoltage > 13.0) && (batteryCurrent > 0.1) && (solarCurrent > 0.1);
+    
+    // ✅ Full: 13.7V (আপনার নতুন threshold)
+    const isFull = (batterySOC >= 95) || (batteryVoltage >= 13.7);
+    
+    const isCritical = batterySOC < 15;
+    const isLow = batterySOC < 30 && batterySOC >= 15;
+    
+    if (isCharging) {
+        return { label: '⚡ চার্জিং', color: '#10b981', className: 'charge-status charging' };
+    } else if (isFull) {
+        return { label: '✅ ফুল', color: '#3b82f6', className: 'charge-status full' };
+    } else if (isCritical) {
+        return { label: '🔴 খুব কম', color: '#ef4444', className: 'charge-status critical' };
+    } else if (isLow) {
+        return { label: '⚠️ কম', color: '#f59e0b', className: 'charge-status low' };
+    } else {
+        return { label: '⚪ স্বাভাবিক', color: '#94a3b8', className: 'charge-status normal' };
+    }
+}
+
+// ==================== UPDATE CHARGING STATUS ====================
+function updateChargingStatusUI(data) {
+    const statusData = getBatteryChargeStatus(data);
+    
+    const chargeStatusEl = document.getElementById('battery_charge_status');
+    if (chargeStatusEl) {
+        chargeStatusEl.textContent = statusData.label;
+        chargeStatusEl.className = statusData.className;
+        chargeStatusEl.style.color = statusData.color;
+    }
+}
+
+// ==================== EFFICIENCY ====================
+function calculateEfficiency(data, powerSource) {
+    const loadVoltage = parseFloat(data.load_voltage) || 0;
+    const loadCurrent = parseFloat(data.battery_current) || 0;
+    const outputPower = loadVoltage * loadCurrent;
+    
+    let inputPower = 0;
+    let efficiency = 0;
+    
+    if (powerSource === 'solar') {
+        const solarVoltage = parseFloat(data.solar_voltage) || 0;
+        const solarCurrent = parseFloat(data.solar_current) || 0;
+        inputPower = solarVoltage * solarCurrent;
+        if (inputPower > 0.1) {
+            efficiency = Math.min((outputPower / inputPower) * 100, 95);
+        }
+    } 
+    else if (powerSource === 'battery') {
+        const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+        const batteryCurrent = parseFloat(data.battery_current) || 0;
+        inputPower = batteryVoltage * batteryCurrent;
+        if (inputPower > 0.1) {
+            efficiency = Math.min((outputPower / inputPower) * 100, 98);
+        }
+    } 
+    else if (powerSource === 'grid') {
+        inputPower = outputPower / 0.95;
+        efficiency = outputPower > 0.1 ? 95 : 0;
+    }
+    
+    efficiency = Math.max(0, Math.min(100, efficiency));
+    if (outputPower < 0.1) efficiency = 0;
+    
+    return { efficiency, outputPower, inputPower };
+}
+
+function updateEfficiencyDisplay(data, powerSource) {
+    const efficiencyElement = document.getElementById('efficiency');
+    if (!efficiencyElement) return;
+    
+    const effData = calculateEfficiency(data, powerSource);
+    const efficiency = effData.efficiency;
+    
+    if (efficiency > 0) {
+        efficiencyElement.textContent = efficiency.toFixed(1) + ' %';
+        if (efficiency > 80) efficiencyElement.style.color = '#10b981';
+        else if (efficiency > 60) efficiencyElement.style.color = '#f59e0b';
+        else if (efficiency > 30) efficiencyElement.style.color = '#f97316';
+        else efficiencyElement.style.color = '#ef4444';
+    } else {
+        efficiencyElement.textContent = '-- %';
+        efficiencyElement.style.color = '#64748b';
+    }
+}
+
+// ==================== SAFETY ALERT ====================
 function setupSafetyAlertNotification() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -246,18 +316,12 @@ function setupSafetyAlertNotification() {
         if (data) {
             const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
             get(systemStatusRef).then((statusSnapshot) => {
-                if (statusSnapshot.exists()) {
-                    const status = statusSnapshot.val();
-                    checkAndShowAlert(data, status);
-                }
-            }).catch(() => {
-                checkAndShowAlert(data, null);
-            });
+                if (statusSnapshot.exists()) checkAndShowAlert(data, statusSnapshot.val());
+            }).catch(() => checkAndShowAlert(data, null));
         }
     });
 }
 
-// ==================== অ্যালার্ট চেক এবং শো ====================
 let lastAlertTime = 0;
 let lastAlertType = '';
 
@@ -266,106 +330,61 @@ function checkAndShowAlert(data, status = null) {
     if (!alertDiv) return;
     
     const batterySOC = parseFloat(data.battery_soc) || 0;
-    const dustLevel = parseFloat(data.dust_level) || 0;
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+    const powerSource = status?.power_source || 'grid';
     
-    let message = '';
-    let type = '';
-    let show = false;
-    let icon = '';
+    const effData = calculateEfficiency(data, powerSource);
+    const efficiency = effData.efficiency;
     
-    // ========== জরুরি অ্যালার্ট (সর্বোচ্চ অগ্রাধিকার) ==========
+    let message = '', type = '', show = false, icon = '';
     
-    // 1. ব্যাটারি খুব কম (ক্রিটিক্যাল)
     if (batterySOC < 15) {
-        message = `⛔ জরুরি! ব্যাটারি চার্জ খুবই কম (${batterySOC.toFixed(0)}%)! দ্রুত চার্জ দিন!`;
-        type = 'danger';
-        icon = 'fa-battery-empty';
-        show = true;
+        message = `⛔ জরুরি! ব্যাটারি চার্জ খুবই কম (${batterySOC.toFixed(0)}%)!`;
+        type = 'danger'; icon = 'fa-battery-empty'; show = true;
     }
-    // 2. ব্যাটারি কম
     else if (batterySOC < 25) {
-        message = `⚠️ সতর্কতা! ব্যাটারি চার্জ কম (${batterySOC.toFixed(0)}%)। চার্জ করুন।`;
-        type = 'warning';
-        icon = 'fa-battery-quarter';
-        show = true;
+        message = `⚠️ সতর্কতা! ব্যাটারি চার্জ কম (${batterySOC.toFixed(0)}%)।`;
+        type = 'warning'; icon = 'fa-battery-quarter'; show = true;
     }
-    // 3. ধুলা বিপজ্জনক
-    else if (dustLevel > 200) {
-        message = `⛔ জরুরি! ধুলার মাত্রা বিপজ্জনক (${dustLevel.toFixed(0)} μg/m³)!`;
-        type = 'danger';
-        icon = 'fa-exclamation-triangle';
-        show = true;
+    else if (efficiency > 0 && efficiency < 30) {
+        message = `⚠️ সিস্টেম দক্ষতা খুব কম (${efficiency.toFixed(1)}%)!`;
+        type = 'warning'; icon = 'fa-exclamation-triangle'; show = true;
     }
-    // 4. ধুলা বেশি
-    else if (dustLevel > 100) {
-        message = `⚠️ সতর্কতা! ধুলার মাত্রা বেশি (${dustLevel.toFixed(0)} μg/m³)।`;
-        type = 'warning';
-        icon = 'fa-wind';
-        show = true;
+    else if (efficiency > 0 && efficiency < 60) {
+        message = `ℹ️ সিস্টেম দক্ষতা কম (${efficiency.toFixed(1)}%)।`;
+        type = 'info'; icon = 'fa-info-circle'; show = true;
     }
-    // 5. সোলার ভোল্টেজ খুব কম
     else if (solarVoltage < 11 && solarVoltage > 0) {
-        message = `⚠️ সোলার ভোল্টেজ কম (${solarVoltage.toFixed(1)}V)। চেক করুন।`;
-        type = 'warning';
-        icon = 'fa-sun';
-        show = true;
+        message = `⚠️ সোলার ভোল্টেজ কম (${solarVoltage.toFixed(1)}V)।`;
+        type = 'warning'; icon = 'fa-sun'; show = true;
     }
-    // 6. ব্যাটারি ভোল্টেজ কম
-    else if (batteryVoltage < 11.5 && batteryVoltage > 0) {
+    else if (batteryVoltage < 11.5 && batteryVoltage > 0) {       // ✅ 11.5
         message = `⚠️ ব্যাটারি ভোল্টেজ কম (${batteryVoltage.toFixed(1)}V)।`;
-        type = 'warning';
-        icon = 'fa-battery-half';
-        show = true;
+        type = 'warning'; icon = 'fa-battery-half'; show = true;
     }
     
-    // ========== অটো সুইচিং অ্যালার্ট (শুধু অটো মোডে) ==========
     if (status && status.mode === 'auto' && !show) {
-        const powerSource = status.power_source || 'grid';
         const currentSource = powerSource;
-        
-        // সোর্স চেঞ্জ হলে অ্যালার্ট
         if (window._lastPowerSource && window._lastPowerSource !== currentSource) {
-            const sourceNames = {
-                solar: '☀️ সোলার',
-                battery: '🔋 ব্যাটারি',
-                grid: '🏭 গ্রিড'
-            };
-            message = `🔄 অটো সুইচ: ${sourceNames[currentSource] || currentSource} চালু হয়েছে`;
-            type = 'info';
-            icon = 'fa-exchange-alt';
-            show = true;
+            const sourceNames = { solar: '☀️ সোলার', battery: '🔋 ব্যাটারি', grid: '🏭 গ্রিড' };
+            message = `🔄 অটো সুইচ: ${sourceNames[currentSource] || currentSource} চালু`;
+            type = 'info'; icon = 'fa-exchange-alt'; show = true;
         }
         window._lastPowerSource = currentSource;
     }
     
-    // ========== ডুপ্লিকেট অ্যালার্ট প্রতিরোধ ==========
     const now = Date.now();
-    if (show && message === lastAlertType && (now - lastAlertTime) < 8000) {
-        show = false;
-    }
+    if (show && message === lastAlertType && (now - lastAlertTime) < 8000) show = false;
     
-    // ========== অ্যালার্ট দেখান ==========
     if (show) {
         lastAlertTime = now;
         lastAlertType = message;
         
-        // অ্যালার্ট স্টাইল
         let bgColor, borderColor, textColor;
-        if (type === 'danger') {
-            bgColor = 'rgba(239, 68, 68, 0.15)';
-            borderColor = '#ef4444';
-            textColor = '#ef4444';
-        } else if (type === 'warning') {
-            bgColor = 'rgba(245, 158, 11, 0.15)';
-            borderColor = '#f59e0b';
-            textColor = '#f59e0b';
-        } else {
-            bgColor = 'rgba(59, 130, 246, 0.15)';
-            borderColor = '#3b82f6';
-            textColor = '#60a5fa';
-        }
+        if (type === 'danger') { bgColor = 'rgba(239, 68, 68, 0.15)'; borderColor = '#ef4444'; textColor = '#ef4444'; }
+        else if (type === 'warning') { bgColor = 'rgba(245, 158, 11, 0.15)'; borderColor = '#f59e0b'; textColor = '#f59e0b'; }
+        else { bgColor = 'rgba(59, 130, 246, 0.15)'; borderColor = '#3b82f6'; textColor = '#60a5fa'; }
         
         alertDiv.style.background = bgColor;
         alertDiv.style.border = `1px solid ${borderColor}`;
@@ -383,7 +402,6 @@ function checkAndShowAlert(data, status = null) {
             </div>
         `;
         
-        // অটো হাইড (৫ সেকেন্ড পর)
         clearTimeout(window.alertHideTimer);
         window.alertHideTimer = setTimeout(() => {
             alertDiv.style.display = 'none';
@@ -392,7 +410,7 @@ function checkAndShowAlert(data, status = null) {
     }
 }
 
-// ==================== ড্যাশবোর্ড লিসেনার ====================
+// ==================== DASHBOARD LISTENERS ====================
 function setupDashboardListeners() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -405,8 +423,10 @@ function setupDashboardListeners() {
     onValue(currentDataRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
+            window._lastCurrentData = data;
             updateDashboardUI(data);
             updateCleaningStatus(data);
+            updateChargingStatusUI(data);
         }
     });
     
@@ -421,7 +441,7 @@ function setupDashboardListeners() {
     });
 }
 
-// ==================== ক্লিনিং স্ট্যাটাস আপডেট (ডট ইন্ডিকেটর সহ) ====================
+// ==================== CLEANING STATUS ====================
 function updateCleaningStatus(data) {
     const cleaningIndicator = document.getElementById('cleaning_status_indicator');
     const cleaningDot = document.getElementById('cleaning_dot');
@@ -433,65 +453,35 @@ function updateCleaningStatus(data) {
     const currentMode = modeSpan?.textContent || 'ম্যানুয়াল মোড';
     const isAutoMode = currentMode.includes('অটো');
     
-    let statusText = '';
-    let dotColor = '';
-    let dotClass = '';
-    let statusColor = '';
+    let statusText = '', dotColor = '', dotClass = '', statusColor = '';
     
-    // ক্লিনিং স্ট্যাটাস চেক
     if (cleaningStatus === 'active') {
-        // ব্রাশ চলছে
         if (brushStatus === 'forward') {
-            statusText = '🔄 ফরওয়ার্ড চলছে';
-            dotColor = '#10b981';
-            dotClass = 'dot-active';
-            statusColor = '#10b981';
+            statusText = '🔄 ফরওয়ার্ড'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981';
         } else if (brushStatus === 'reverse') {
-            statusText = '🔄 রিভার্স চলছে';
-            dotColor = '#f59e0b';
-            dotClass = 'dot-active';
-            statusColor = '#f59e0b';
+            statusText = '🔄 রিভার্স'; dotColor = '#f59e0b'; dotClass = 'dot-active'; statusColor = '#f59e0b';
         } else {
-            statusText = '🧹 চলমান';
-            dotColor = '#10b981';
-            dotClass = 'dot-active';
-            statusColor = '#10b981';
+            statusText = '🧹 চলমান'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981';
         }
     } else if (cleaningStatus === 'paused') {
-        statusText = '⏸ বিরতিতে';
-        dotColor = '#f59e0b';
-        dotClass = 'dot-paused';
-        statusColor = '#f59e0b';
+        statusText = '⏸ বিরতি'; dotColor = '#f59e0b'; dotClass = 'dot-paused'; statusColor = '#f59e0b';
     } else {
-        // নিষ্ক্রিয়
         if (isAutoMode) {
-            statusText = '🤖 অটো (স্ট্যান্ডবাই)';
-            dotColor = '#60a5fa';
-            dotClass = 'dot-auto-idle';
-            statusColor = '#60a5fa';
+            statusText = '🤖 অটো'; dotColor = '#60a5fa'; dotClass = 'dot-auto-idle'; statusColor = '#60a5fa';
         } else {
-            statusText = '⏹ নিষ্ক্রিয়';
-            dotColor = '#6b7280';
-            dotClass = 'dot-idle';
-            statusColor = '#6b7280';
+            statusText = '⏹ নিষ্ক্রিয়'; dotColor = '#6b7280'; dotClass = 'dot-idle'; statusColor = '#6b7280';
         }
     }
     
-    // টেক্সট আপডেট
     cleaningIndicator.textContent = statusText;
     cleaningIndicator.style.color = statusColor;
     cleaningIndicator.className = `cleaning-status`;
     
-    // ডট আপডেট
     cleaningDot.style.background = dotColor;
     cleaningDot.className = `cleaning-dot ${dotClass}`;
-    
-    // টুলটিপ
-    const modeText = isAutoMode ? '🔵 অটো' : '🟢 ম্যানুয়াল';
-    cleaningIndicator.title = `মোড: ${modeText} | স্ট্যাটাস: ${statusText}`;
-    cleaningDot.title = `মোড: ${modeText} | স্ট্যাটাস: ${statusText}`;
 }
 
+// ==================== FETCH DATA ====================
 async function fetchDashboardData() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -504,50 +494,39 @@ async function fetchDashboardData() {
         const currentSnapshot = await get(currentDataRef);
         if (currentSnapshot.exists()) {
             const data = currentSnapshot.val();
+            window._lastCurrentData = data;
             updateDashboardUI(data);
             updateCleaningStatus(data);
+            updateChargingStatusUI(data);
         }
         
         const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
         const statusSnapshot = await get(systemStatusRef);
         if (statusSnapshot.exists()) {
-            updateSystemStatusUI(statusSnapshot.val());
-            updatePowerFlowBySource(statusSnapshot.val().power_source);
+            const status = statusSnapshot.val();
+            updateSystemStatusUI(status);
+            updatePowerFlowBySource(status.power_source);
+            if (window._lastCurrentData) {
+                updateEfficiencyDisplay(window._lastCurrentData, status.power_source);
+            }
         }
     } catch (error) {
-        console.error("Error fetching dashboard data:", error);
+        console.error("Error fetching:", error);
     }
 }
 
+// ==================== UPDATE UI ====================
 function updateDashboardUI(data) {
     const batterySOC = parseFloat(data.battery_soc) || 0;
     
-    const dustElement = document.getElementById('dust');
-    if (dustElement) {
-        const dustLevel = parseFloat(data.dust_level) || 0;
-        dustElement.textContent = dustLevel.toFixed(1) + ' μg/m³';
-    }
-    
     const batterySocElement = document.getElementById('battery_soc');
-    if (batterySocElement) {
-        batterySocElement.textContent = batterySOC.toFixed(1) + '%';
-    }
-    
-    const efficiencyElement = document.getElementById('efficiency');
-    if (efficiencyElement) {
-        const efficiency = parseFloat(data.efficiency) || 0;
-        efficiencyElement.textContent = efficiency.toFixed(1) + ' %';
-    }
+    if (batterySocElement) batterySocElement.textContent = batterySOC.toFixed(1) + '%';
     
     const batteryPercentageValue = document.getElementById('battery_percentage_value');
-    if (batteryPercentageValue) {
-        batteryPercentageValue.textContent = batterySOC.toFixed(1);
-    }
+    if (batteryPercentageValue) batteryPercentageValue.textContent = batterySOC.toFixed(1);
     
     const batteryPercentageText = document.getElementById('batteryPercentageText');
-    if (batteryPercentageText) {
-        batteryPercentageText.textContent = batterySOC.toFixed(1) + '%';
-    }
+    if (batteryPercentageText) batteryPercentageText.textContent = batterySOC.toFixed(1) + '%';
     
     const batteryVoltageElement = document.getElementById('battery_voltage');
     if (batteryVoltageElement) {
@@ -559,18 +538,15 @@ function updateDashboardUI(data) {
     const solarVoltageText = document.getElementById('solarVoltageText');
     if (solarVoltageText) {
         solarVoltageText.textContent = solarVoltage.toFixed(1) + ' V';
-        if (solarVoltage > 13) {
-            solarVoltageText.style.fill = '#f97316';
-        } else {
-            solarVoltageText.style.fill = '#64748b';
-        }
+        solarVoltageText.style.fill = solarVoltage > 13 ? '#f97316' : '#64748b';
     }
     
-    const loadPower = (parseFloat(data.load_voltage) || 0) * (parseFloat(data.load_current) || 0);
+    const loadVoltage = parseFloat(data.load_voltage) || 0;
+    const loadCurrent = parseFloat(data.battery_current) || 0;
+    const loadPower = loadVoltage * loadCurrent;
+    
     const loadPowerText = document.getElementById('loadPowerText');
-    if (loadPowerText) {
-        loadPowerText.textContent = loadPower.toFixed(1) + ' W';
-    }
+    if (loadPowerText) loadPowerText.textContent = loadPower.toFixed(1) + ' W';
     
     const batteryProgressBar = document.getElementById('batteryProgressBar');
     if (batteryProgressBar) {
@@ -580,16 +556,18 @@ function updateDashboardUI(data) {
     
     updateBatteryColors(batterySOC);
     
-    const solarCurrent = parseFloat(data.solar_current) || 0;
-    const batteryCurrent = parseFloat(data.battery_current) || 0;
-    const chargingIndicator = document.getElementById('chargingIndicator');
-    if (chargingIndicator) {
-        if (solarCurrent > 0.1 && batteryCurrent > 0) {
-            chargingIndicator.style.display = 'inline-block';
-            chargingIndicator.style.color = '#10b981';
-        } else {
-            chargingIndicator.style.display = 'none';
-        }
+    const database = window.database;
+    const currentUserId = window.currentUserId;
+    const currentDeviceId = window.currentDeviceId;
+    
+    if (database && currentUserId && currentDeviceId) {
+        const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
+        get(systemStatusRef).then((snapshot) => {
+            if (snapshot.exists()) {
+                const powerSource = snapshot.val().power_source || 'grid';
+                updateEfficiencyDisplay(data, powerSource);
+            }
+        }).catch(() => updateEfficiencyDisplay(data, 'grid'));
     }
 }
 
@@ -610,224 +588,100 @@ function updateSystemStatusUI(status) {
     }
 }
 
+// ==================== POWER FLOW ====================
 function updatePowerFlowBySource(powerSource) {
     const solarToBatteryFlow = document.getElementById('solarToBatteryFlow');
     const gridToBatteryFlow = document.getElementById('gridToBatteryFlow');
     const batteryToLoadFlow = document.getElementById('batteryToLoadFlow');
-    
     const solarBox = document.getElementById('solarBox');
     const gridBox = document.getElementById('gridBox');
     const batteryBox = document.getElementById('batteryBox');
     const loadBox = document.getElementById('loadBox');
-    
     const gridStatusText = document.getElementById('gridStatusText');
     const currentSourceSpan = document.getElementById('currentSourceSpan');
     
-    if (solarToBatteryFlow) {
-        solarToBatteryFlow.style.display = 'none';
-        solarToBatteryFlow.style.animation = 'none';
-    }
-    if (gridToBatteryFlow) {
-        gridToBatteryFlow.style.display = 'none';
-        gridToBatteryFlow.style.animation = 'none';
-    }
-    if (batteryToLoadFlow) {
-        batteryToLoadFlow.style.display = 'none';
-        batteryToLoadFlow.style.animation = 'none';
-    }
+    if (solarToBatteryFlow) { solarToBatteryFlow.style.display = 'none'; solarToBatteryFlow.style.animation = 'none'; }
+    if (gridToBatteryFlow) { gridToBatteryFlow.style.display = 'none'; gridToBatteryFlow.style.animation = 'none'; }
+    if (batteryToLoadFlow) { batteryToLoadFlow.style.display = 'none'; batteryToLoadFlow.style.animation = 'none'; }
     
-    if (solarBox) {
-        solarBox.setAttribute('stroke', '#334155');
-        solarBox.style.opacity = '1';
-        solarBox.style.filter = 'none';
-    }
-    if (gridBox) {
-        gridBox.setAttribute('stroke', '#334155');
-        gridBox.style.opacity = '1';
-        gridBox.style.filter = 'none';
-    }
-    if (batteryBox) {
-        batteryBox.setAttribute('stroke', '#10b981');
-        batteryBox.style.opacity = '1';
-        batteryBox.style.filter = 'none';
-    }
-    if (loadBox) {
-        loadBox.setAttribute('stroke', '#06b6d4');
-        loadBox.style.opacity = '1';
-        loadBox.style.filter = 'none';
-    }
+    if (solarBox) { solarBox.setAttribute('stroke', '#334155'); solarBox.style.opacity = '1'; solarBox.style.filter = 'none'; }
+    if (gridBox) { gridBox.setAttribute('stroke', '#334155'); gridBox.style.opacity = '1'; gridBox.style.filter = 'none'; }
+    if (batteryBox) { batteryBox.setAttribute('stroke', '#10b981'); batteryBox.style.opacity = '1'; batteryBox.style.filter = 'none'; }
+    if (loadBox) { loadBox.setAttribute('stroke', '#06b6d4'); loadBox.style.opacity = '1'; loadBox.style.filter = 'none'; }
     
     if (powerSource === 'off') {
-        if (solarBox) {
-            solarBox.setAttribute('stroke', '#4b5563');
-            solarBox.style.opacity = '0.4';
-        }
-        if (gridBox) {
-            gridBox.setAttribute('stroke', '#4b5563');
-            gridBox.style.opacity = '0.4';
-        }
-        if (batteryBox) {
-            batteryBox.setAttribute('stroke', '#4b5563');
-            batteryBox.style.opacity = '0.4';
-        }
-        if (loadBox) {
-            loadBox.setAttribute('stroke', '#4b5563');
-            loadBox.style.opacity = '0.4';
-        }
-        if (gridStatusText) {
-            gridStatusText.textContent = 'স্ট্যান্ডবাই';
-            gridStatusText.style.fill = '#64748b';
-        }
-        if (currentSourceSpan) {
-            currentSourceSpan.textContent = '⛔ সিস্টেম বন্ধ';
-            currentSourceSpan.className = 'current-source off';
-        }
+        if (solarBox) { solarBox.setAttribute('stroke', '#4b5563'); solarBox.style.opacity = '0.4'; }
+        if (gridBox) { gridBox.setAttribute('stroke', '#4b5563'); gridBox.style.opacity = '0.4'; }
+        if (batteryBox) { batteryBox.setAttribute('stroke', '#4b5563'); batteryBox.style.opacity = '0.4'; }
+        if (loadBox) { loadBox.setAttribute('stroke', '#4b5563'); loadBox.style.opacity = '0.4'; }
+        if (gridStatusText) { gridStatusText.textContent = 'স্ট্যান্ডবাই'; gridStatusText.style.fill = '#64748b'; }
+        if (currentSourceSpan) { currentSourceSpan.textContent = '⛔ সিস্টেম বন্ধ'; currentSourceSpan.className = 'current-source off'; }
         return;
     }
     
     switch(powerSource) {
         case 'solar':
-            if (solarToBatteryFlow) {
-                solarToBatteryFlow.style.display = 'block';
-                solarToBatteryFlow.style.animation = 'flowMove 0.8s linear infinite';
-            }
-            if (batteryToLoadFlow) {
-                batteryToLoadFlow.style.display = 'block';
-                batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite';
-            }
-            if (solarBox) {
-                solarBox.setAttribute('stroke', '#f97316');
-                solarBox.style.filter = 'url(#glowSolar)';
-            }
-            if (batteryBox) {
-                batteryBox.setAttribute('stroke', '#10b981');
-                batteryBox.style.filter = 'url(#glowBattery)';
-            }
-            if (loadBox) {
-                loadBox.setAttribute('stroke', '#10b981');
-            }
-            if (gridStatusText) {
-                gridStatusText.textContent = 'স্ট্যান্ডবাই';
-                gridStatusText.style.fill = '#64748b';
-            }
-            if (currentSourceSpan) {
-                currentSourceSpan.textContent = '☀️ সোলার → ব্যাটারি → লোড';
-                currentSourceSpan.className = 'current-source solar';
-            }
+            if (solarToBatteryFlow) { solarToBatteryFlow.style.display = 'block'; solarToBatteryFlow.style.animation = 'flowMove 0.8s linear infinite'; }
+            if (batteryToLoadFlow) { batteryToLoadFlow.style.display = 'block'; batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite'; }
+            if (solarBox) { solarBox.setAttribute('stroke', '#f97316'); solarBox.style.filter = 'url(#glowSolar)'; }
+            if (batteryBox) { batteryBox.setAttribute('stroke', '#10b981'); batteryBox.style.filter = 'url(#glowBattery)'; }
+            if (loadBox) loadBox.setAttribute('stroke', '#10b981');
+            if (gridStatusText) { gridStatusText.textContent = 'স্ট্যান্ডবাই'; gridStatusText.style.fill = '#64748b'; }
+            if (currentSourceSpan) { currentSourceSpan.textContent = '☀️ সোলার → ব্যাটারি → লোড'; currentSourceSpan.className = 'current-source solar'; }
             break;
-            
         case 'battery':
-            if (batteryToLoadFlow) {
-                batteryToLoadFlow.style.display = 'block';
-                batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite';
-            }
-            if (batteryBox) {
-                batteryBox.setAttribute('stroke', '#10b981');
-                batteryBox.style.filter = 'url(#glowBattery)';
-            }
-            if (loadBox) {
-                loadBox.setAttribute('stroke', '#10b981');
-            }
-            if (gridStatusText) {
-                gridStatusText.textContent = 'স্ট্যান্ডবাই';
-                gridStatusText.style.fill = '#64748b';
-            }
-            if (currentSourceSpan) {
-                currentSourceSpan.textContent = '🔋 ব্যাটারি → লোড';
-                currentSourceSpan.className = 'current-source battery';
-            }
+            if (batteryToLoadFlow) { batteryToLoadFlow.style.display = 'block'; batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite'; }
+            if (batteryBox) { batteryBox.setAttribute('stroke', '#10b981'); batteryBox.style.filter = 'url(#glowBattery)'; }
+            if (loadBox) loadBox.setAttribute('stroke', '#10b981');
+            if (gridStatusText) { gridStatusText.textContent = 'স্ট্যান্ডবাই'; gridStatusText.style.fill = '#64748b'; }
+            if (currentSourceSpan) { currentSourceSpan.textContent = '🔋 ব্যাটারি → লোড'; currentSourceSpan.className = 'current-source battery'; }
             break;
-            
         case 'grid':
-            if (gridToBatteryFlow) {
-                gridToBatteryFlow.style.display = 'block';
-                gridToBatteryFlow.style.animation = 'flowMove 0.8s linear infinite';
-            }
-            if (batteryToLoadFlow) {
-                batteryToLoadFlow.style.display = 'block';
-                batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite';
-            }
-            if (gridBox) {
-                gridBox.setAttribute('stroke', '#3b82f6');
-                gridBox.style.filter = 'url(#glowGrid)';
-            }
-            if (batteryBox) {
-                batteryBox.setAttribute('stroke', '#10b981');
-                batteryBox.style.filter = 'url(#glowBattery)';
-            }
-            if (loadBox) {
-                loadBox.setAttribute('stroke', '#10b981');
-            }
-            if (gridStatusText) {
-                gridStatusText.textContent = '✅ সক্রিয়';
-                gridStatusText.style.fill = '#3b82f6';
-            }
-            if (currentSourceSpan) {
-                currentSourceSpan.textContent = '🏭 গ্রিড → ব্যাটারি → লোড';
-                currentSourceSpan.className = 'current-source grid';
-            }
-            break;
-            
-        default:
-            if (currentSourceSpan) {
-                currentSourceSpan.textContent = '⚡ সিস্টেম বন্ধ';
-                currentSourceSpan.className = 'current-source off';
-            }
+            if (gridToBatteryFlow) { gridToBatteryFlow.style.display = 'block'; gridToBatteryFlow.style.animation = 'flowMove 0.8s linear infinite'; }
+            if (batteryToLoadFlow) { batteryToLoadFlow.style.display = 'block'; batteryToLoadFlow.style.animation = 'flowMove 0.8s linear infinite'; }
+            if (gridBox) { gridBox.setAttribute('stroke', '#3b82f6'); gridBox.style.filter = 'url(#glowGrid)'; }
+            if (batteryBox) { batteryBox.setAttribute('stroke', '#10b981'); batteryBox.style.filter = 'url(#glowBattery)'; }
+            if (loadBox) loadBox.setAttribute('stroke', '#10b981');
+            if (gridStatusText) { gridStatusText.textContent = '✅ সক্রিয়'; gridStatusText.style.fill = '#3b82f6'; }
+            if (currentSourceSpan) { currentSourceSpan.textContent = '🏭 গ্রিড → ব্যাটারি → লোড'; currentSourceSpan.className = 'current-source grid'; }
             break;
     }
 }
 
+// ==================== BATTERY COLORS ====================
 function updateBatteryColors(soc) {
     const percentageElement = document.getElementById('battery_percentage_value');
     const progressBar = document.getElementById('batteryProgressBar');
     const healthElement = document.getElementById('batteryHealthStatus');
     const batteryPercentageText = document.getElementById('batteryPercentageText');
     
-    if (percentageElement) {
-        percentageElement.classList.remove('critical', 'warning', 'normal', 'good');
-    }
-    if (progressBar) {
-        progressBar.classList.remove('critical', 'warning', 'normal', 'good');
-    }
-    if (healthElement) {
-        healthElement.classList.remove('critical', 'warning', 'normal', 'good');
-    }
+    if (percentageElement) percentageElement.classList.remove('critical', 'warning', 'normal', 'good');
+    if (progressBar) progressBar.classList.remove('critical', 'warning', 'normal', 'good');
+    if (healthElement) healthElement.classList.remove('critical', 'warning', 'normal', 'good');
     
     if (soc < 20) {
         if (percentageElement) percentageElement.classList.add('critical');
         if (progressBar) progressBar.classList.add('critical');
         if (batteryPercentageText) batteryPercentageText.style.fill = '#ef4444';
-        if (healthElement) {
-            healthElement.classList.add('critical');
-            healthElement.textContent = '🔴 ঝুঁকিপূর্ণ';
-        }
+        if (healthElement) { healthElement.classList.add('critical'); healthElement.textContent = '🔴 ঝুঁকিপূর্ণ'; }
     } 
     else if (soc < 50) {
         if (percentageElement) percentageElement.classList.add('warning');
         if (progressBar) progressBar.classList.add('warning');
         if (batteryPercentageText) batteryPercentageText.style.fill = '#f59e0b';
-        if (healthElement) {
-            healthElement.classList.add('warning');
-            healthElement.textContent = '🟡 সতর্কতা';
-        }
+        if (healthElement) { healthElement.classList.add('warning'); healthElement.textContent = '🟡 সতর্কতা'; }
     } 
     else if (soc < 80) {
         if (percentageElement) percentageElement.classList.add('normal');
         if (progressBar) progressBar.classList.add('normal');
         if (batteryPercentageText) batteryPercentageText.style.fill = '#10b981';
-        if (healthElement) {
-            healthElement.classList.add('normal');
-            healthElement.textContent = '🟢 ভালো';
-        }
+        if (healthElement) { healthElement.classList.add('normal'); healthElement.textContent = '🟢 ভালো'; }
     } 
     else {
         if (percentageElement) percentageElement.classList.add('good');
         if (progressBar) progressBar.classList.add('good');
         if (batteryPercentageText) batteryPercentageText.style.fill = '#059669';
-        if (healthElement) {
-            healthElement.classList.add('good');
-            healthElement.textContent = '🌟 অতি ভালো';
-        }
+        if (healthElement) { healthElement.classList.add('good'); healthElement.textContent = '🌟 অতি ভালো'; }
     }
 }
 
@@ -837,168 +691,85 @@ window.updateNetworkStatus = function(connected) {
         if (connected) {
             networkStatus.textContent = '✅ কানেক্টেড';
             networkStatus.className = 'network-status connected';
+            networkStatus.style.color = '#10b981';
         } else {
             networkStatus.textContent = '❌ ডিসকানেক্টেড';
             networkStatus.className = 'network-status disconnected';
+            networkStatus.style.color = '#ef4444';
         }
     }
 };
 
-// অ্যালার্ট CSS স্টাইল
+// ==================== CSS ====================
 const alertStyles = document.createElement('style');
 alertStyles.textContent = `
-    .safety-alert {
-        display: none;
-        margin-bottom: 15px;
-        padding: 0;
-        border-radius: 10px;
-        overflow: hidden;
-        animation: slideDown 0.3s ease;
-        background: transparent !important;
-        border: none !important;
-    }
+    .safety-alert { display: none; margin-bottom: 15px; border-radius: 10px; overflow: hidden; animation: slideDown 0.3s ease; }
+    .safety-alert.show { display: block; }
+    .alert-notification { display: flex; align-items: center; padding: 12px 16px; gap: 12px; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-radius: 10px; border: 1px solid rgba(96, 165, 250, 0.3); }
+    .alert-notification i { font-size: 20px; flex-shrink: 0; }
+    .alert-message { flex: 1; font-size: 14px; font-weight: 500; color: #e2e8f0; }
+    .alert-close { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px; }
+    .safety-alert.danger .alert-notification { border-color: #ef4444; background: rgba(239, 68, 68, 0.15); }
+    .safety-alert.warning .alert-notification { border-color: #f59e0b; background: rgba(245, 158, 11, 0.15); }
+    .safety-alert.info .alert-notification { border-color: #3b82f6; background: rgba(59, 130, 246, 0.15); }
     
-    .safety-alert.show {
-        display: block;
-    }
+    .cleaning-status { font-weight: 500; padding: 2px 8px; border-radius: 4px; margin-right: 8px; }
+    .cleaning-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 2px; }
+    .cleaning-dot.dot-active { animation: dotPulse 1s infinite; box-shadow: 0 0 10px currentColor; }
+    .cleaning-dot.dot-paused { animation: dotPulse 2s infinite; }
+    .cleaning-dot.dot-auto-idle { opacity: 0.7; }
+    .cleaning-dot.dot-idle { opacity: 0.4; }
+    @keyframes dotPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } }
     
-    .alert-notification {
-        display: flex;
-        align-items: center;
-        padding: 12px 16px;
-        gap: 12px;
-        background: rgba(15, 23, 42, 0.95);
-        backdrop-filter: blur(10px);
-        border-radius: 10px;
-        border: 1px solid rgba(96, 165, 250, 0.3);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-    }
-    
-    .alert-notification i {
-        font-size: 20px;
-        flex-shrink: 0;
-    }
-    
-    .alert-message {
-        flex: 1;
-        font-size: 14px;
-        font-weight: 500;
-        color: #e2e8f0;
-    }
-    
-    .alert-close {
-        background: none;
-        border: none;
-        color: #94a3b8;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-        transition: all 0.2s;
-        font-size: 14px;
-    }
-    
-    .alert-close:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: #e2e8f0;
-    }
-    
-    .safety-alert.danger .alert-notification {
-        border-color: #ef4444;
-        background: rgba(239, 68, 68, 0.15);
-    }
-    
-    .safety-alert.danger .alert-notification i {
-        color: #ef4444;
-    }
-    
-    .safety-alert.warning .alert-notification {
-        border-color: #f59e0b;
-        background: rgba(245, 158, 11, 0.15);
-    }
-    
-    .safety-alert.warning .alert-notification i {
-        color: #f59e0b;
-    }
-    
-    .safety-alert.info .alert-notification {
-        border-color: #3b82f6;
-        background: rgba(59, 130, 246, 0.15);
-    }
-    
-    .safety-alert.info .alert-notification i {
-        color: #3b82f6;
-    }
-    
-    /* ================= ক্লিনিং স্ট্যাটাস ডট ইন্ডিকেটর ================= */
-    .cleaning-status {
-        font-weight: 500;
-        padding: 2px 8px;
-        border-radius: 4px;
-        transition: all 0.3s;
-        margin-right: 8px;
-    }
-    
-    .cleaning-dot {
+    .charge-status {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 12px;
+        margin-left: 6px;
+        transition: all 0.3s ease;
         display: inline-block;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        transition: all 0.3s;
-        flex-shrink: 0;
-        margin-left: 2px;
     }
     
-    .cleaning-dot.dot-active {
-        animation: dotPulse 1s infinite;
-        box-shadow: 0 0 10px currentColor;
+    .charge-status.charging {
+        animation: chargePulse 1.5s ease-in-out infinite;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid rgba(16, 185, 129, 0.4);
     }
     
-    .cleaning-dot.dot-paused {
-        animation: dotPulse 2s infinite;
-        box-shadow: 0 0 8px currentColor;
+    .charge-status.full {
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(59, 130, 246, 0.4);
     }
     
-    .cleaning-dot.dot-auto-idle {
-        opacity: 0.7;
-        box-shadow: 0 0 6px currentColor;
+    .charge-status.low {
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        animation: warningBlink 2s ease-in-out infinite;
     }
     
-    .cleaning-dot.dot-idle {
-        opacity: 0.4;
+    .charge-status.critical {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        animation: criticalBlink 1s ease-in-out infinite;
     }
     
-    @keyframes dotPulse {
-        0% {
-            transform: scale(1);
-            opacity: 1;
-        }
-        50% {
-            transform: scale(1.3);
-            opacity: 0.7;
-        }
-        100% {
-            transform: scale(1);
-            opacity: 1;
-        }
+    .charge-status.normal {
+        background: rgba(148, 163, 184, 0.1);
+        border: 1px solid rgba(148, 163, 184, 0.3);
     }
     
-    .status-value {
-        display: flex;
-        align-items: center;
-        gap: 4px;
+    @keyframes chargePulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(16, 185, 129, 0); }
+        50% { transform: scale(1.05); box-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
     }
     
-    @keyframes slideDown {
-        from {
-            opacity: 0;
-            transform: translateY(-10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
+    @keyframes warningBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+    @keyframes criticalBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    
+    .status-value { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 `;
 document.head.appendChild(alertStyles);
 
-console.log("✅ Dashboard.js loaded - Cleaning status with dot indicator");
+console.log("✅ Dashboard.js - SOC Linear (11.0-13.7V)");
