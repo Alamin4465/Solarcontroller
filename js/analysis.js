@@ -1,9 +1,8 @@
-// js/analysis.js - এনালাইসিস মডিউল (টেবিল: তারিখের নিচে সময়)
+// js/analysis.js - Dust বাদ, Efficiency Calculated, Chart Fixed
 
-// ==================== Firebase ইমপোর্ট ====================
-import { ref, onValue, push, set, get, update } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js';
+import { ref, onValue, push, set, get } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js';
 
-// ==================== Chart.js - Dynamic Script Load ====================
+// ==================== Chart.js Load ====================
 let Chart = null;
 let chartLoaded = false;
 
@@ -15,6 +14,21 @@ function loadChartScript() {
             resolve(Chart);
             return;
         }
+        
+        const existingScript = document.querySelector('script[src*="chart.umd"]');
+        if (existingScript) {
+            setTimeout(() => {
+                if (typeof window.Chart !== 'undefined') {
+                    Chart = window.Chart;
+                    chartLoaded = true;
+                    resolve(Chart);
+                } else {
+                    reject(new Error('Chart.js already loading but not ready'));
+                }
+            }, 1000);
+            return;
+        }
+        
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
         script.async = true;
@@ -25,23 +39,24 @@ function loadChartScript() {
             resolve(Chart);
         };
         script.onerror = function() {
-            reject(new Error('Chart.js লোড করতে ব্যর্থ হয়েছে'));
+            reject(new Error('Chart.js লোড করতে ব্যর্থ'));
         };
         document.head.appendChild(script);
     });
 }
 
-// ==================== কনস্ট্যান্টস ====================
+// ==================== Constants ====================
 const SAVE_INTERVAL = 5000;
 const MAX_HISTORY_DISPLAY = 20;
 
-// ==================== গ্লোবাল ভেরিয়েবল ====================
+// ==================== Global ====================
 let historyData = [];
 let currentSensorData = null;
 let autoSaveInterval = null;
 let lastSaveTime = 0;
 let combinedListenerUnsubscribe = null;
 let chartInstance = null;
+let chartMode = 'voltage';
 let chartData = {
     labels: [],
     solarVoltage: [],
@@ -52,51 +67,69 @@ let chartData = {
     loadCurrent: []
 };
 
-// ==================== ইউটিলিটি ফাংশনস ====================
-
+// ==================== Utility ====================
 function formatDate(timestamp) {
     if (!timestamp) return 'N/A';
     try {
         return new Date(timestamp).toLocaleDateString('bn-BD', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
+            year: 'numeric', month: '2-digit', day: '2-digit'
         });
-    } catch (e) {
-        return 'Invalid Date';
-    }
+    } catch (e) { return 'Invalid'; }
 }
 
 function formatTime(timestamp) {
     if (!timestamp) return 'N/A';
     try {
         return new Date(timestamp).toLocaleTimeString('bn-BD', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
         });
-    } catch (e) {
-        return 'Invalid Time';
-    }
+    } catch (e) { return 'Invalid'; }
 }
 
-function formatTimestamp(timestamp) {
-    if (!timestamp) return 'N/A';
-    try {
-        return new Date(timestamp).toLocaleString('bn-BD', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-    } catch (e) {
-        return 'Invalid Date';
-    }
+// ==================== SOC CALCULATION (Linear) ====================
+// 11.0V = 0%, 13.7V = 100%
+function calculateSOC(voltage) {
+    let soc = ((voltage - 11.0) / 2.7) * 100;
+    return Math.max(0, Math.min(100, soc));
 }
 
-// ==================== লোড অ্যানালাইসিস ====================
+// ==================== EFFICIENCY CALCULATION ====================
+function calculateEfficiency(data, powerSource) {
+    const loadVoltage = parseFloat(data.load_voltage) || 0;
+    const loadCurrent = parseFloat(data.battery_current) || 0;
+    const outputPower = loadVoltage * loadCurrent;
+    
+    let inputPower = 0;
+    let efficiency = 0;
+    
+    if (powerSource === 'solar') {
+        const solarVoltage = parseFloat(data.solar_voltage) || 0;
+        const solarCurrent = parseFloat(data.solar_current) || 0;
+        inputPower = solarVoltage * solarCurrent;
+        if (inputPower > 0.1) {
+            efficiency = Math.min((outputPower / inputPower) * 100, 95);
+        }
+    } 
+    else if (powerSource === 'battery') {
+        const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+        const batteryCurrent = parseFloat(data.battery_current) || 0;
+        inputPower = batteryVoltage * batteryCurrent;
+        if (inputPower > 0.1) {
+            efficiency = Math.min((outputPower / inputPower) * 100, 98);
+        }
+    } 
+    else if (powerSource === 'grid') {
+        inputPower = outputPower / 0.95;
+        efficiency = outputPower > 0.1 ? 95 : 0;
+    }
+    
+    efficiency = Math.max(0, Math.min(100, efficiency));
+    if (outputPower < 0.1) efficiency = 0;
+    
+    return { efficiency, outputPower, inputPower };
+}
+
+// ==================== Load Analysis ====================
 export async function loadAnalysis() {
     const content = document.getElementById("content");
     if (!content) return;
@@ -112,7 +145,6 @@ export async function loadAnalysis() {
     
     content.innerHTML = `
         <div class="analysis-container">
-            <!-- সামারি কার্ডস -->
             <div class="summary-container">
                 <div class="summary-card solar">
                     <div class="summary-header">
@@ -190,7 +222,6 @@ export async function loadAnalysis() {
                 </div>
             </div>
             
-            <!-- Chart Section -->
             <div class="history-card" style="margin-top: 15px;">
                 <div class="history-header">
                     <i class="fas fa-chart-line"></i>
@@ -199,12 +230,11 @@ export async function loadAnalysis() {
                         <button id="toggleChartBtn" class="btn-small"><i class="fas fa-exchange-alt"></i> V/A</button>
                     </div>
                 </div>
-                <div style="padding: 15px; width: 100%; height: 320px; position: relative;">
+                <div id="chartContainer" style="padding: 15px; width: 100%; height: 320px; position: relative;">
                     <canvas id="analysisChart"></canvas>
                 </div>
             </div>
             
-            <!-- History Table - তারিখের নিচে সময় -->
             <div class="history-card" style="margin-top: 15px;">
                 <div class="history-header">
                     <i class="fas fa-table"></i>
@@ -215,26 +245,28 @@ export async function loadAnalysis() {
                         <button id="exportDataBtn" class="btn-small"><i class="fas fa-download"></i> এক্সপোর্ট</button>
                     </div>
                 </div>
-                <div style="width: 100%; overflow-x: auto; padding: 0 5px; -webkit-overflow-scrolling: touch;">
-                    <table class="data-table" style="width: 100%; min-width: 650px; border-collapse: collapse; font-size: 12px;">
+                <div style="width: 100%; overflow-x: auto; padding: 0 5px;">
+                    <table class="data-table" style="width: 100%; min-width: 600px; border-collapse: collapse; font-size: 12px;">
                         <thead>
                             <tr>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">#</th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">তারিখ<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">সময়</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">সোলার<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">V</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">সোলার<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">A</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">ব্যাটারি<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">V</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">ব্যাটারি<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">A</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">লোড<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">V</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">লোড<br><span style="font-weight:normal;font-size:10px;color:#94a3b8;">A</span></th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">ডাস্ট</th>
-                                <th style="padding: 10px 4px; text-align: center; white-space: nowrap; background: rgba(0,0,0,0.2);">এফিশিয়েন্সি</th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">#</th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">তারিখ<br><span style="font-size:10px;color:#94a3b8;">সময়</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">সোলার<br><span style="font-size:10px;color:#94a3b8;">V</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">সোলার<br><span style="font-size:10px;color:#94a3b8;">A</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">ব্যাটারি<br><span style="font-size:10px;color:#94a3b8;">V</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">ব্যাটারি<br><span style="font-size:10px;color:#94a3b8;">A</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">লোড<br><span style="font-size:10px;color:#94a3b8;">V</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">লোড<br><span style="font-size:10px;color:#94a3b8;">A*</span></th>
+                                <th style="padding: 10px 4px; text-align: center; background: rgba(0,0,0,0.2);">এফিশিয়েন্সি</th>
                             </tr>
                         </thead>
                         <tbody id="historyTableBody">
-                            <tr><td colspan="10" style="text-align: center; padding: 25px;">📥 ডাটা লোড হচ্ছে...</td></tr>
+                            <tr><td colspan="9" style="text-align: center; padding: 25px;">📥 ডাটা লোড হচ্ছে...</td></tr>
                         </tbody>
                     </table>
+                    <div style="text-align: right; padding: 5px 10px; font-size: 10px; color: #64748b;">
+                        * লোড A = ব্যাটারি A | এফিশিয়েন্সি = Web App calculated
+                    </div>
                 </div>
             </div>
         </div>
@@ -242,31 +274,50 @@ export async function loadAnalysis() {
     
     try {
         await loadChartScript();
+        console.log('✅ Chart ready');
     } catch (error) {
-        console.warn('Chart.js লোড না হলে চার্ট দেখাবে না:', error);
+        console.error('Chart.js load failed:', error);
     }
     
     setupCombinedListener();
     await loadHistoryData();
     startAutoSave();
     
-    setTimeout(() => {
+    if (chartLoaded && Chart) {
         initChart();
-    }, 500);
+    } else {
+        setTimeout(() => {
+            if (Chart || window.Chart) {
+                Chart = window.Chart;
+                initChart();
+            }
+        }, 1000);
+    }
     
     document.getElementById("refreshHistoryBtn")?.addEventListener("click", () => loadHistoryData());
     document.getElementById("exportDataBtn")?.addEventListener("click", () => exportHistoryData());
-    document.getElementById("toggleChartBtn")?.addEventListener("click", toggleChartMode);
+    document.getElementById("toggleChartBtn")?.addEventListener("click", () => toggleChartMode());
 }
 
-// ==================== চার্ট ইনিশিয়ালাইজ ====================
+// ==================== Chart Init ====================
 function initChart() {
     const ctx = document.getElementById('analysisChart');
-    if (!ctx) return;
+    if (!ctx) {
+        console.warn('Chart canvas not found');
+        return;
+    }
+    
+    if (!Chart && !window.Chart) {
+        console.warn('Chart.js not loaded');
+        const container = document.getElementById('chartContainer');
+        if (container) {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">📊 চার্ট লোড হয়নি<br><small>ইন্টারনেট চেক করুন</small></div>';
+        }
+        return;
+    }
     
     if (!Chart) {
-        ctx.parentElement.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">📊 চার্ট লোড করতে সমস্যা<br><small>ইন্টারনেট কানেকশন চেক করুন</small></div>';
-        return;
+        Chart = window.Chart;
     }
     
     if (chartInstance) {
@@ -278,11 +329,11 @@ function initChart() {
         chartInstance = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: chartData.labels,
+                labels: chartData.labels.length > 0 ? chartData.labels : ['No Data'],
                 datasets: [
                     {
                         label: 'সোলার V',
-                        data: chartData.solarVoltage,
+                        data: chartData.solarVoltage.length > 0 ? chartData.solarVoltage : [0],
                         borderColor: '#f97316',
                         backgroundColor: 'rgba(249, 115, 22, 0.1)',
                         tension: 0.3,
@@ -292,7 +343,7 @@ function initChart() {
                     },
                     {
                         label: 'ব্যাটারি V',
-                        data: chartData.batteryVoltage,
+                        data: chartData.batteryVoltage.length > 0 ? chartData.batteryVoltage : [0],
                         borderColor: '#10b981',
                         backgroundColor: 'rgba(16, 185, 129, 0.1)',
                         tension: 0.3,
@@ -302,7 +353,7 @@ function initChart() {
                     },
                     {
                         label: 'লোড V',
-                        data: chartData.loadVoltage,
+                        data: chartData.loadVoltage.length > 0 ? chartData.loadVoltage : [0],
                         borderColor: '#06b6d4',
                         backgroundColor: 'rgba(6, 182, 212, 0.1)',
                         tension: 0.3,
@@ -317,126 +368,55 @@ function initChart() {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        labels: { 
-                            color: '#cbd5e1',
-                            font: { size: 11 },
-                            boxWidth: 12,
-                            padding: 10
-                        }
+                        labels: { color: '#cbd5e1', font: { size: 11 }, boxWidth: 12, padding: 10 }
                     }
                 },
                 scales: {
                     x: {
-                        ticks: { 
-                            color: '#94a3b8',
-                            font: { size: 9 },
-                            maxTicksLimit: 10
-                        },
+                        ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: 10 },
                         grid: { color: 'rgba(255,255,255,0.05)' }
                     },
                     y: {
-                        ticks: { 
-                            color: '#94a3b8',
-                            font: { size: 10 }
-                        },
+                        ticks: { color: '#94a3b8', font: { size: 10 } },
                         grid: { color: 'rgba(255,255,255,0.05)' }
                     }
                 }
             }
         });
-        console.log('✅ Chart initialized');
+        console.log('✅ Chart initialized successfully');
     } catch (error) {
         console.error('Chart error:', error);
     }
 }
 
-// ==================== চার্ট মোড টগল ====================
-let chartMode = 'voltage';
-
+// ==================== Chart Toggle ====================
 function toggleChartMode() {
-    if (!chartInstance || !Chart) return;
+    if (!chartInstance) {
+        console.warn('Chart not initialized');
+        return;
+    }
     
     chartMode = chartMode === 'voltage' ? 'current' : 'voltage';
-    const btn = document.getElementById('toggleChartBtn');
     
     if (chartMode === 'voltage') {
-        btn.innerHTML = '<i class="fas fa-exchange-alt"></i> V/A';
         chartInstance.data.datasets = [
-            {
-                label: 'সোলার V',
-                data: chartData.solarVoltage,
-                borderColor: '#f97316',
-                backgroundColor: 'rgba(249, 115, 22, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                fill: true
-            },
-            {
-                label: 'ব্যাটারি V',
-                data: chartData.batteryVoltage,
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                fill: true
-            },
-            {
-                label: 'লোড V',
-                data: chartData.loadVoltage,
-                borderColor: '#06b6d4',
-                backgroundColor: 'rgba(6, 182, 212, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                fill: true
-            }
+            { label: 'সোলার V', data: chartData.solarVoltage, borderColor: '#f97316', backgroundColor: 'rgba(249, 115, 22, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true },
+            { label: 'ব্যাটারি V', data: chartData.batteryVoltage, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true },
+            { label: 'লোড V', data: chartData.loadVoltage, borderColor: '#06b6d4', backgroundColor: 'rgba(6, 182, 212, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true }
         ];
     } else {
-        btn.innerHTML = '<i class="fas fa-exchange-alt"></i> V/A';
         chartInstance.data.datasets = [
-            {
-                label: 'সোলার A',
-                data: chartData.solarCurrent,
-                borderColor: '#f97316',
-                backgroundColor: 'rgba(249, 115, 22, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                borderDash: [5, 3],
-                fill: true
-            },
-            {
-                label: 'ব্যাটারি A',
-                data: chartData.batteryCurrent,
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                borderDash: [5, 3],
-                fill: true
-            },
-            {
-                label: 'লোড A',
-                data: chartData.loadCurrent,
-                borderColor: '#06b6d4',
-                backgroundColor: 'rgba(6, 182, 212, 0.1)',
-                tension: 0.3,
-                pointRadius: 2,
-                borderWidth: 2,
-                borderDash: [5, 3],
-                fill: true
-            }
+            { label: 'সোলার A', data: chartData.solarCurrent, borderColor: '#f97316', backgroundColor: 'rgba(249, 115, 22, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, borderDash: [5, 3], fill: true },
+            { label: 'ব্যাটারি A', data: chartData.batteryCurrent, borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, borderDash: [5, 3], fill: true },
+            { label: 'লোড A (ব্যাটারি)', data: chartData.loadCurrent, borderColor: '#06b6d4', backgroundColor: 'rgba(6, 182, 212, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, borderDash: [5, 3], fill: true }
         ];
     }
     chartInstance.update();
 }
 
-// ==================== চার্ট আপডেট ====================
+// ==================== Chart Update ====================
 function updateChart() {
-    if (!chartInstance || !Chart) return;
+    if (!chartInstance) return;
     
     const labels = historyData.map(item => {
         const d = new Date(item.timestamp);
@@ -448,7 +428,7 @@ function updateChart() {
     const loadVoltage = historyData.map(item => item.load_voltage || 0).reverse();
     const solarCurrent = historyData.map(item => item.solar_current || 0).reverse();
     const batteryCurrent = historyData.map(item => item.battery_current || 0).reverse();
-    const loadCurrent = historyData.map(item => item.load_current || 0).reverse();
+    const loadCurrent = historyData.map(item => item.battery_current || 0).reverse();
     
     chartData.labels = labels;
     chartData.solarVoltage = solarVoltage;
@@ -473,7 +453,7 @@ function updateChart() {
     chartInstance.update('none');
 }
 
-// ==================== সেন্সর লিসেনার ====================
+// ==================== Sensor Listener ====================
 function setupCombinedListener() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -487,8 +467,7 @@ function setupCombinedListener() {
     }
     
     const currentDataRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/current_data`);
-    
-    const unsubscribe = onValue(currentDataRef, (snapshot) => {
+    const unsub1 = onValue(currentDataRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
             currentSensorData = data;
@@ -498,15 +477,23 @@ function setupCombinedListener() {
             currentSensorData = null;
             updateSaveStatus(false);
         }
-    }, (error) => {
-        console.error("Listener error:", error);
-        updateSaveStatus(false);
     });
     
-    combinedListenerUnsubscribe = unsubscribe;
+    const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
+    const unsub2 = onValue(systemStatusRef, (snapshot) => {
+        const status = snapshot.val();
+        if (status && status.power_source) {
+            window._currentPowerSource = status.power_source;
+        }
+    });
+    
+    combinedListenerUnsubscribe = () => {
+        unsub1();
+        unsub2();
+    };
 }
 
-// ==================== সামারি কার্ড আপডেট ====================
+// ==================== Summary Cards ====================
 function updateSummaryCards(data) {
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     const solarCurrent = parseFloat(data.solar_current) || 0;
@@ -525,7 +512,7 @@ function updateSummaryCards(data) {
     document.getElementById('batterySummaryW').textContent = batteryPower.toFixed(1);
     
     const loadVoltage = parseFloat(data.load_voltage) || 0;
-    const loadCurrent = parseFloat(data.load_current) || 0;
+    const loadCurrent = parseFloat(data.battery_current) || 0;
     const loadPower = loadVoltage * loadCurrent;
     
     document.getElementById('loadSummaryV').textContent = loadVoltage.toFixed(1);
@@ -533,12 +520,9 @@ function updateSummaryCards(data) {
     document.getElementById('loadSummaryW').textContent = loadPower.toFixed(1);
 }
 
-// ==================== অটো সেভ ====================
+// ==================== Auto Save ====================
 function startAutoSave() {
-    if (autoSaveInterval) {
-        clearInterval(autoSaveInterval);
-        autoSaveInterval = null;
-    }
+    if (autoSaveInterval) clearInterval(autoSaveInterval);
     autoSaveInterval = setInterval(async () => {
         if (currentSensorData) await saveToHistory(currentSensorData);
     }, SAVE_INTERVAL);
@@ -554,6 +538,10 @@ async function saveToHistory(data) {
     if (now - lastSaveTime < 3000) return;
     lastSaveTime = now;
     
+    const loadCurrent = parseFloat(data.battery_current) || 0;
+    const powerSource = window._currentPowerSource || 'grid';
+    const effData = calculateEfficiency(data, powerSource);
+    
     const historyEntry = {
         timestamp: now,
         solar_voltage: parseFloat(data.solar_voltage) || 0,
@@ -561,9 +549,9 @@ async function saveToHistory(data) {
         battery_voltage: parseFloat(data.battery_voltage) || 0,
         battery_current: parseFloat(data.battery_current) || 0,
         load_voltage: parseFloat(data.load_voltage) || 0,
-        load_current: parseFloat(data.load_current) || 0,
-        dust_level: parseFloat(data.dust_level) || 0,
-        efficiency: parseFloat(data.efficiency) || 0
+        load_current: loadCurrent,
+        efficiency: effData.efficiency,
+        battery_soc: calculateSOC(parseFloat(data.battery_voltage) || 0)   // ✅ SOC যোগ
     };
     
     try {
@@ -575,11 +563,11 @@ async function saveToHistory(data) {
         updateChart();
         flashSaveIndicator();
     } catch (error) {
-        console.error("সেভ করতে সমস্যা:", error);
+        console.error("সেভ ব্যর্থ:", error);
     }
 }
 
-// ==================== ইতিহাস লোড ====================
+// ==================== Load History ====================
 async function loadHistoryData() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -587,7 +575,7 @@ async function loadHistoryData() {
     if (!database || !currentUserId || !currentDeviceId) return;
     
     const tbody = document.getElementById('historyTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 25px;">📥 ডাটা আনছি...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 25px;">📥 ডাটা আনছি...</td></tr>';
     
     try {
         const historyRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/history`);
@@ -597,37 +585,48 @@ async function loadHistoryData() {
             const history = snapshot.val();
             const historyArray = Object.values(history);
             historyArray.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-            historyData = historyArray.slice(0, MAX_HISTORY_DISPLAY);
+            
+            historyData = historyArray.slice(0, MAX_HISTORY_DISPLAY).map(item => ({
+                ...item,
+                load_current: item.battery_current || 0,
+                efficiency: item.efficiency || 0,
+                battery_soc: item.battery_soc || calculateSOC(item.battery_voltage || 0)
+            }));
+            
             updateHistoryTable();
             updateChart();
         } else {
-            if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 25px;">📭 কোনো ডাটা নেই</td></tr>';
+            if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 25px;">📭 কোনো ডাটা নেই</td></tr>';
         }
     } catch (error) {
-        console.error("ইতিহাস লোডে সমস্যা:", error);
-        if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 25px; color: #ef4444;">❌ লোড করতে সমস্যা</td></tr>';
+        console.error("লোড ব্যর্থ:", error);
+        if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 25px; color: #ef4444;">❌ লোড ব্যর্থ</td></tr>';
     }
 }
 
-// ==================== টেবিল আপডেট ====================
+// ==================== Update Table ====================
 function updateHistoryTable() {
     const tbody = document.getElementById('historyTableBody');
     if (!tbody) return;
     if (!historyData || historyData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 25px;">📭 কোনো ডাটা নেই</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 25px;">📭 কোনো ডাটা নেই</td></tr>';
         return;
     }
     
     tbody.innerHTML = historyData.map((item, index) => {
         const date = formatDate(item.timestamp);
         const time = formatTime(item.timestamp);
-        const dust = item.dust_level || 0;
         const eff = item.efficiency || 0;
-        let dustColor = dust > 150 ? '#ef4444' : dust > 75 ? '#f59e0b' : '#10b981';
-        let effColor = eff < 50 ? '#ef4444' : eff < 70 ? '#f59e0b' : '#10b981';
+        const loadCurrent = item.battery_current || 0;
+        
+        let effColor = '#94a3b8';
+        if (eff > 80) effColor = '#10b981';
+        else if (eff > 60) effColor = '#f59e0b';
+        else if (eff > 30) effColor = '#f97316';
+        else if (eff > 0) effColor = '#ef4444';
         
         return `
-            <tr style="transition: 0.3s; border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <td style="text-align: center; font-weight: bold; color: #10b981; padding: 8px 4px;">${index + 1}</td>
                 <td style="text-align: center; padding: 8px 4px; white-space: nowrap; line-height: 1.6;">
                     <div style="font-size: 12px; font-weight: 500;">${date}</div>
@@ -638,8 +637,7 @@ function updateHistoryTable() {
                 <td style="text-align: center; padding: 8px 4px; font-weight: 500;">${(item.battery_voltage || 0).toFixed(2)}</td>
                 <td style="text-align: center; padding: 8px 4px; font-weight: 500;">${(item.battery_current || 0).toFixed(2)}</td>
                 <td style="text-align: center; padding: 8px 4px; font-weight: 500;">${(item.load_voltage || 0).toFixed(2)}</td>
-                <td style="text-align: center; padding: 8px 4px; font-weight: 500;">${(item.load_current || 0).toFixed(2)}</td>
-                <td style="text-align: center; padding: 8px 4px; color: ${dustColor}; font-weight: bold;">${dust.toFixed(1)}</td>
+                <td style="text-align: center; padding: 8px 4px; font-weight: 500; color: #f59e0b;">${loadCurrent.toFixed(2)}</td>
                 <td style="text-align: center; padding: 8px 4px; color: ${effColor}; font-weight: bold;">${eff.toFixed(1)}%</td>
             </tr>
         `;
@@ -662,27 +660,30 @@ function flashSaveIndicator() {
     }
 }
 
-// ==================== এক্সপোর্ট ====================
+// ==================== Export ====================
 function exportHistoryData() {
     if (!historyData || historyData.length === 0) {
-        alert('এক্সপোর্ট করার মতো ডাটা নেই');
+        alert('এক্সপোর্ট করার ডাটা নেই');
         return;
     }
     
-    const headers = ['ক্রমিক', 'তারিখ', 'সময়', 'সোলার V', 'সোলার A', 'ব্যাটারি V', 'ব্যাটারি A', 'লোড V', 'লোড A', 'ডাস্ট', 'এফিশিয়েন্সি (%)'];
-    const rows = historyData.map((item, index) => [
-        index + 1,
-        formatDate(item.timestamp),
-        formatTime(item.timestamp),
-        (item.solar_voltage || 0).toFixed(2),
-        (item.solar_current || 0).toFixed(2),
-        (item.battery_voltage || 0).toFixed(2),
-        (item.battery_current || 0).toFixed(2),
-        (item.load_voltage || 0).toFixed(2),
-        (item.load_current || 0).toFixed(2),
-        (item.dust_level || 0).toFixed(1),
-        (item.efficiency || 0).toFixed(1)
-    ]);
+    const headers = ['ক্রমিক', 'তারিখ', 'সময়', 'সোলার V', 'সোলার A', 'ব্যাটারি V', 'ব্যাটারি A', 'লোড V', 'লোড A', 'এফিশিয়েন্সি (%)', 'SOC (%)'];
+    const rows = historyData.map((item, index) => {
+        const loadCurrent = item.battery_current || 0;
+        return [
+            index + 1,
+            formatDate(item.timestamp),
+            formatTime(item.timestamp),
+            (item.solar_voltage || 0).toFixed(2),
+            (item.solar_current || 0).toFixed(2),
+            (item.battery_voltage || 0).toFixed(2),
+            (item.battery_current || 0).toFixed(2),
+            (item.load_voltage || 0).toFixed(2),
+            loadCurrent.toFixed(2),
+            (item.efficiency || 0).toFixed(1),
+            (item.battery_soc || 0).toFixed(1)
+        ];
+    });
     
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -697,21 +698,12 @@ function exportHistoryData() {
     alert(`✅ এক্সপোর্ট সম্পন্ন: ${historyData.length} রেকর্ড`);
 }
 
-// ==================== ক্লিনআপ ====================
+// ==================== Cleanup ====================
 export function cleanupAnalysis() {
-    if (autoSaveInterval) {
-        clearInterval(autoSaveInterval);
-        autoSaveInterval = null;
-    }
-    if (combinedListenerUnsubscribe) {
-        combinedListenerUnsubscribe();
-        combinedListenerUnsubscribe = null;
-    }
-    if (chartInstance) {
-        chartInstance.destroy();
-        chartInstance = null;
-    }
-    console.log("🧹 Analysis cleanup completed");
+    if (autoSaveInterval) { clearInterval(autoSaveInterval); autoSaveInterval = null; }
+    if (combinedListenerUnsubscribe) { combinedListenerUnsubscribe(); combinedListenerUnsubscribe = null; }
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    console.log("🧹 Analysis cleanup");
 }
 
-console.log("✅ Analysis.js loaded - তারিখের নিচে সময়");
+console.log("✅ Analysis.js - SOC Linear (11.0-13.7V)");
