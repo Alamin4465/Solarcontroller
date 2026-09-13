@@ -1,9 +1,7 @@
-// js/control.js - Auto + Manual (Cleaning Mode সম্পূর্ণ বাদ)
-// ESP32 নিজেই Cleaning handle করবে
+// js/control.js - Manual button সবসময় দেখা যাবে
 
 import { ref, onValue, get, push, update, set } from 'firebase/database';
 
-// ==================== Helper: Push Command ====================
 async function pushCommand(action, extraData = {}) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -34,11 +32,10 @@ async function pushCommand(action, extraData = {}) {
         sent_at: Date.now()
     });
     
-    console.log(`✅ Command: ${action}`, extraData);
+    console.log(`Command: ${action}`, extraData);
     return newCommandRef.key;
 }
 
-// ==================== Main Control Loader ====================
 export async function loadControl() {
     const content = document.getElementById("content");
     if (!content) return;
@@ -54,12 +51,11 @@ export async function loadControl() {
     
     content.innerHTML = `
         <div class="control-grid">
-            <!-- Power Control -->
             <div class="card">
                 <div class="card-header"><i class="fas fa-bolt"></i><h3>পাওয়ার কন্ট্রোল মোড</h3></div>
                 <div class="mode-buttons">
                     <button id="autoModeBtn" class="btn-mode"><i class="fas fa-robot"></i> অটো</button>
-                    <button id="manualModeBtn" class="btn-mode"><i class="fas fa-hand"></i> ম্যানুয়াল</button>
+                    <button id="manualModeBtn" class="btn-mode active"><i class="fas fa-hand"></i> ম্যানুয়াল</button>
                     <button id="stopModeBtn" class="btn-mode danger"><i class="fas fa-stop"></i> জরুরি বন্ধ</button>
                 </div>
                 <div id="powerSourceSection" class="power-buttons">
@@ -72,7 +68,6 @@ export async function loadControl() {
                                 <span class="toggle-label"><i class="fas fa-power-off"></i></span>
                             </div>
                         </button>
-                        
                         <button id="powerBatteryBtn" class="btn-source battery">
                             <div class="toggle-track">
                                 <span class="toggle-label"><i class="fas fa-car-battery"></i> ব্যাটারি</span>
@@ -80,7 +75,6 @@ export async function loadControl() {
                                 <span class="toggle-label"><i class="fas fa-power-off"></i></span>
                             </div>
                         </button>
-                        
                         <button id="powerGridBtn" class="btn-source grid">
                             <div class="toggle-track">
                                 <span class="toggle-label"><i class="fas fa-city"></i> গ্রিড</span>
@@ -88,7 +82,6 @@ export async function loadControl() {
                                 <span class="toggle-label"><i class="fas fa-power-off"></i></span>
                             </div>
                         </button>
-                        
                         <button id="powerAllOffBtn" class="btn-source off">
                             <div class="toggle-track">
                                 <span class="toggle-label"><i class="fas fa-power-off"></i> অফ</span>
@@ -120,7 +113,6 @@ export async function loadControl() {
                 </div>
             </div>
             
-            <!-- Brush Control -->
             <div id="brushCard" class="card">
                 <div class="card-header"><i class="fas fa-brush"></i><h3>ব্রাশ কন্ট্রোল</h3></div>
                 <div class="manual-controls">
@@ -131,12 +123,8 @@ export async function loadControl() {
                     </div>
                 </div>
                 <div class="mt-2">ব্রাশ: <strong id="brushStatusText">বন্ধ</strong></div>
-                <div style="font-size:11px;color:#64748b;margin-top:8px;">
-                    <i class="fas fa-info-circle"></i> Limit Switch চাপলে ESP32 নিজেই বন্ধ করবে
-                </div>
             </div>
             
-            <!-- Pump Control -->
             <div id="pumpCard" class="card">
                 <div class="card-header"><i class="fas fa-water-pump"></i><h3>পাম্প কন্ট্রোল</h3></div>
                 <div class="pump-buttons">
@@ -154,7 +142,6 @@ export async function loadControl() {
     setupLastCommandListener();
 }
 
-// ==================== Event Listeners ====================
 function setupControlListeners() {
     document.getElementById('autoModeBtn')?.addEventListener('click', () => switchMode('auto'));
     document.getElementById('manualModeBtn')?.addEventListener('click', () => switchMode('manual'));
@@ -173,7 +160,6 @@ function setupControlListeners() {
     document.getElementById('pumpOffBtn')?.addEventListener('click', () => sendPumpCommand('off'));
 }
 
-// ==================== Last Command Listener ====================
 function setupLastCommandListener() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -204,21 +190,21 @@ function updateLastCommandDisplay(cmd) {
     
     if (cmd.action === 'brush_control') {
         const names = { forward: 'ফরওয়ার্ড', reverse: 'রিভার্স', stop: 'বন্ধ' };
-        displayText = `🧹 ব্রাশ: ${names[cmd.command] || cmd.command}`;
+        displayText = `ব্রাশ: ${names[cmd.command] || cmd.command}`;
     } 
     else if (cmd.action === 'pump_control') {
-        displayText = `💧 পাম্প: ${cmd.state === 'on' ? 'চালু' : 'বন্ধ'}`;
+        displayText = `পাম্প: ${cmd.state === 'on' ? 'চালু' : 'বন্ধ'}`;
     } 
     else if (cmd.action === 'set_mode') {
         const modes = { auto: 'অটো', manual: 'ম্যানুয়াল', stop: 'জরুরি বন্ধ' };
-        displayText = `🎛️ মোড: ${modes[cmd.mode] || cmd.mode}`;
+        displayText = `মোড: ${modes[cmd.mode] || cmd.mode}`;
     } 
     else if (cmd.action === 'set_power_source') {
         const sources = { solar: 'সোলার', battery: 'ব্যাটারি', grid: 'গ্রিড', off: 'অফ' };
-        displayText = `⚡ সোর্স: ${sources[cmd.source] || cmd.source}`;
+        displayText = `সোর্স: ${sources[cmd.source] || cmd.source}`;
     } 
     else if (cmd.action === 'emergency_stop') {
-        displayText = `⛔ জরুরি বন্ধ`;
+        displayText = `জরুরি বন্ধ`;
     } 
     else {
         displayText = cmd.action;
@@ -236,7 +222,6 @@ function updateLastCommandDisplay(cmd) {
     }
 }
 
-// ==================== Status Listeners ====================
 function setupControlStatusListeners() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -266,14 +251,10 @@ function setupControlStatusListeners() {
         const data = snapshot.val();
         if (data) {
             updateBrushPumpStatus(data);
-            if (isAutoModeActive) {
-                updateAutoStatus('ডাটা প্রাপ্ত - বিশ্লেষণ', 'success');
-            }
         }
     });
 }
 
-// ==================== Load Current Status ====================
 async function loadCurrentControlStatus() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -290,15 +271,18 @@ async function loadCurrentControlStatus() {
             if (status.mode === 'auto') {
                 startAutoMode();
             }
+        } else {
+            updateControlStatusUI({ mode: 'manual', power_source: 'grid' });
         }
     } catch (error) {
         console.error("Error loading status:", error);
+        updateControlStatusUI({ mode: 'manual', power_source: 'grid' });
     }
 }
 
-// ==================== UI Update ====================
 function updateControlStatusUI(status) {
     const mode = status.mode || 'manual';
+    
     const modeSpan = document.getElementById('currentModeStatus');
     if (modeSpan) {
         if (mode === 'auto') {
@@ -307,7 +291,7 @@ function updateControlStatusUI(status) {
         } else if (mode === 'manual') {
             modeSpan.textContent = 'ম্যানুয়াল';
             modeSpan.className = 'badge manual';
-        } else if (mode === 'stop') {
+        } else if (mode === 'stop' || mode === 'emergency') {
             modeSpan.textContent = 'জরুরি বন্ধ';
             modeSpan.className = 'badge stop';
         }
@@ -319,13 +303,12 @@ function updateControlStatusUI(status) {
     
     if (autoBtn) autoBtn.classList.toggle('active', mode === 'auto');
     if (manualBtn) manualBtn.classList.toggle('active', mode === 'manual');
-    if (stopBtn) stopBtn.classList.toggle('active', mode === 'stop');
+    if (stopBtn) stopBtn.classList.toggle('active', mode === 'stop' || mode === 'emergency');
     
     const powerSourceSection = document.getElementById('powerSourceSection');
     const brushCard = document.getElementById('brushCard');
     const pumpCard = document.getElementById('pumpCard');
     const autoReasonDiv = document.getElementById('autoReason');
-    const autoReasonText = document.getElementById('autoReasonText');
     const autoStatusDiv = document.getElementById('autoStatus');
     
     if (mode === 'manual') {
@@ -334,7 +317,6 @@ function updateControlStatusUI(status) {
         if (pumpCard) pumpCard.classList.remove('hidden');
         if (autoReasonDiv) autoReasonDiv.classList.add('hidden');
         if (autoStatusDiv) autoStatusDiv.classList.add('hidden');
-        
     } else if (mode === 'auto') {
         if (powerSourceSection) powerSourceSection.classList.add('hidden');
         if (brushCard) brushCard.classList.add('hidden');
@@ -342,16 +324,16 @@ function updateControlStatusUI(status) {
         if (autoReasonDiv) autoReasonDiv.classList.remove('hidden');
         if (autoStatusDiv) autoStatusDiv.classList.remove('hidden');
         
-        if (status.last_switch_reason && autoReasonText) {
-            autoReasonText.innerHTML = status.last_switch_reason;
-        } else if (status.current_reason && autoReasonText) {
-            autoReasonText.innerHTML = status.current_reason;
-        } else if (autoReasonText) {
-            autoReasonText.innerHTML = '🤖 অটো মোড সক্রিয় - পাওয়ার সোর্স মনিটরিং';
+        const autoReasonText = document.getElementById('autoReasonText');
+        if (autoReasonText) {
+            if (status.last_switch_reason) {
+                autoReasonText.innerHTML = status.last_switch_reason;
+            } else if (status.current_reason) {
+                autoReasonText.innerHTML = status.current_reason;
+            } else {
+                autoReasonText.innerHTML = 'অটো মোড সক্রিয়';
+            }
         }
-        
-        updateAutoStatus('সিস্টেম মনিটরিং চলছে...', 'info');
-        
     } else {
         if (powerSourceSection) powerSourceSection.classList.add('hidden');
         if (brushCard) brushCard.classList.add('hidden');
@@ -389,16 +371,12 @@ function updateAutoStatus(message, type = 'info') {
     
     if (type === 'success') {
         statusText.style.color = '#10b981';
-        statusDiv.querySelector('.fa-spin')?.classList.remove('fa-spin');
     } else if (type === 'warning') {
         statusText.style.color = '#f59e0b';
-        statusDiv.querySelector('.fa-spin')?.classList.add('fa-spin');
     } else if (type === 'error') {
         statusText.style.color = '#ef4444';
-        statusDiv.querySelector('.fa-spin')?.classList.remove('fa-spin');
     } else {
         statusText.style.color = '#60a5fa';
-        statusDiv.querySelector('.fa-spin')?.classList.add('fa-spin');
     }
 }
 
@@ -433,7 +411,6 @@ function updateBrushPumpStatus(data) {
     }
 }
 
-// ==================== Mode Switch ====================
 async function switchMode(mode) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -444,48 +421,20 @@ async function switchMode(mode) {
         return;
     }
     
-    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    const statusSnapshot = await get(statusRef);
-    const currentStatus = statusSnapshot.val() || {};
-    const currentMode = currentStatus.mode || 'manual';
-    
-    if (currentMode === mode) {
-        window.showNotification(`ইতিমধ্যে ${mode === 'auto' ? 'অটো' : 'ম্যানুয়াল'} মোডে আছেন`, 'info');
-        return;
-    }
-    
-    if (mode === 'auto' && currentMode === 'stop') {
-        const confirmReset = confirm(`⚠️ সিস্টেম জরুরি বন্ধ অবস্থায় আছে। রিসেট করে অটো মোডে যেতে চান?`);
-        if (!confirmReset) return;
-        await resetFromEmergencyStop('auto');
-        return;
-    }
-    
-    if (mode === 'auto' && currentStatus.power_source === 'off') {
-        window.showNotification('🔄 সিস্টেম রিসেট করে অটো মোডে যাচ্ছে...', 'info');
-        await resetFromEmergencyStop('auto');
-        return;
-    }
+    // ✅ UI immediately update
+    updateControlStatusUI({ mode: mode, power_source: 'grid' });
     
     try {
         await pushCommand('set_mode', { mode: mode });
         
         if (mode === 'auto') {
             await startAutoMode();
-            setTimeout(() => performAutoCheck(), 1500);
         } else {
             stopAutoMode();
-            if (mode === 'manual') {
-                await sendBrushCommand('stop');
-            }
         }
         
         const modeNames = { auto: 'অটো', manual: 'ম্যানুয়াল', stop: 'জরুরি বন্ধ' };
         window.showNotification(`${modeNames[mode]} মোড চালু হয়েছে`, 'success');
-        
-        if (mode === 'stop') {
-            await setPowerSourceOff('জরুরি বন্ধে সব পাওয়ার অফ');
-        }
         
     } catch (error) {
         console.error("Error switching mode:", error);
@@ -493,7 +442,6 @@ async function switchMode(mode) {
     }
 }
 
-// ==================== Power Source ====================
 async function setPowerSource(source) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -504,90 +452,58 @@ async function setPowerSource(source) {
         return;
     }
     
-    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-    const statusSnapshot = await get(statusRef);
-    const currentStatus = statusSnapshot.val() || {};
-    const currentMode = currentStatus.mode || 'manual';
-    const currentSource = currentStatus.power_source || 'grid';
-    
-    if (currentSource === source && currentMode !== 'stop') {
-        await setPowerSourceOff('সোর্স অফ করা হয়েছে');
-        return;
-    }
-    
-    if (currentMode === 'stop') {
-        window.showNotification('⚠️ সিস্টেম জরুরি বন্ধ অবস্থায় আছে। আগে রিসেট করুন।', 'warning');
-        return;
-    }
-    
-    if (currentMode === 'auto') {
-        window.showNotification('⚠️ অটো মোডে পাওয়ার সোর্স পরিবর্তন করা যাবে না।', 'warning');
-        return;
-    }
-    
     try {
         await pushCommand('set_power_source', { source: source });
         
-        const names = { solar: '☀️ সোলার', battery: '🔋 ব্যাটারি', grid: '🏭 গ্রিড' };
+        const names = { solar: 'সোলার', battery: 'ব্যাটারি', grid: 'গ্রিড' };
         window.showNotification(`${names[source]} চালু করা হয়েছে`, 'success');
         
-        await addControlAlert('info', `পাওয়ার সোর্স: ${names[source]}`);
+        // ✅ UI update
+        updateControlStatusUI({ mode: 'manual', power_source: source });
         
     } catch (error) {
         console.error("Error setting power source:", error);
-        window.showNotification('পাওয়ার সোর্স পরিবর্তনে সমস্যা', 'error');
     }
 }
 
-// ==================== All Off ====================
 async function setPowerSourceOff(reason = 'ম্যানুয়ালি অফ') {
     const database = window.database;
     const currentUserId = window.currentUserId;
     const currentDeviceId = window.currentDeviceId;
     
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
+    if (!database || !currentUserId || !currentDeviceId) return;
     
     try {
         await pushCommand('set_power_source', { source: 'off' });
-        
-        window.showNotification('⚡ সব পাওয়ার সোর্স বন্ধ', 'warning');
-        await addControlAlert('warning', reason);
-        
+        window.showNotification('সব পাওয়ার সোর্স বন্ধ', 'warning');
     } catch (error) {
         console.error("Error turning off power:", error);
     }
 }
 
-// ==================== Emergency Stop ====================
 async function emergencyStop() {
-    if (!confirm('⚠️ সিস্টেম জরুরি বন্ধ করতে চান? সব রিলে বন্ধ হবে।')) return;
+    if (!confirm('সিস্টেম জরুরি বন্ধ করতে চান?')) return;
     
     const database = window.database;
     const currentUserId = window.currentUserId;
     const currentDeviceId = window.currentDeviceId;
     
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
+    if (!database || !currentUserId || !currentDeviceId) return;
     
     try {
         stopAutoMode();
         await pushCommand('emergency_stop', { reason: 'User initiated' });
         
-        window.showNotification('⛔ সিস্টেম জরুরি বন্ধ', 'error');
-        await addControlAlert('error', 'সিস্টেম জরুরি বন্ধ করা হয়েছে');
+        // ✅ UI update
+        updateControlStatusUI({ mode: 'emergency', power_source: 'off' });
+        
+        window.showNotification('সিস্টেম জরুরি বন্ধ', 'error');
         
     } catch (error) {
         console.error("Error in emergency stop:", error);
-        window.showNotification('জরুরি বন্ধে সমস্যা', 'error');
     }
 }
 
-// ==================== Brush Command ====================
 async function sendBrushCommand(command) {
     const modeSpan = document.getElementById('currentModeStatus');
     if (modeSpan?.textContent === 'অটো' || modeSpan?.textContent === 'জরুরি বন্ধ') {
@@ -597,16 +513,13 @@ async function sendBrushCommand(command) {
     
     try {
         await pushCommand('brush_control', { command: command });
-        
         const names = { forward: 'ফরওয়ার্ড', reverse: 'রিভার্স', stop: 'বন্ধ' };
         window.showNotification(`ব্রাশ ${names[command] || command}`, 'success');
     } catch (error) {
-        console.error("Error sending brush command:", error);
-        window.showNotification('ব্রাশ কমান্ড পাঠাতে সমস্যা', 'error');
+        console.error("Error:", error);
     }
 }
 
-// ==================== Pump Command ====================
 async function sendPumpCommand(state) {
     const modeSpan = document.getElementById('currentModeStatus');
     if (modeSpan?.textContent === 'অটো' || modeSpan?.textContent === 'জরুরি বন্ধ') {
@@ -616,77 +529,32 @@ async function sendPumpCommand(state) {
     
     try {
         await pushCommand('pump_control', { state: state });
-        
         window.showNotification(`পাম্প ${state === 'on' ? 'চালু' : 'বন্ধ'}`, 'success');
     } catch (error) {
-        console.error("Error sending pump command:", error);
-        window.showNotification('পাম্প কমান্ড পাঠাতে সমস্যা', 'error');
+        console.error("Error:", error);
     }
 }
 
-// ==================== Alert ====================
-async function addControlAlert(type, message) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    try {
-        const alertsRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/alerts`);
-        const newAlertRef = push(alertsRef);
-        await set(newAlertRef, { 
-            type, 
-            message, 
-            timestamp: new Date().toLocaleTimeString(), 
-            time: Date.now() 
-        });
-    } catch (error) {
-        console.error("Error adding alert:", error);
-    }
-}
-
-// ==================== Auto Mode ====================
 let isAutoModeActive = false;
 let autoCheckInterval = null;
-let dataTimeout = null;
 let lastDataReceived = 0;
 const DATA_TIMEOUT_MS = 15000;
 const CHECK_INTERVAL_MS = 5000;
 
-// ✅ Thresholds (Battery Min 11.5V - নতুন SOC এর সাথে মিল)
-const AUTO_THRESHOLDS = {
-    SOLAR_MIN_VOLTAGE: 12.5,
-    SOLAR_GOOD_VOLTAGE: 13.0,
-    BATTERY_MIN_VOLTAGE: 11.5,       // ✅ 11.8 → 11.5
-    BATTERY_CRITICAL_SOC: 25,
-    BATTERY_GOOD_SOC: 40,
-    CHECK_INTERVAL: 5000
-};
-
 async function startAutoMode() {
     if (autoCheckInterval) {
         clearInterval(autoCheckInterval);
-        autoCheckInterval = null;
-    }
-    if (dataTimeout) {
-        clearTimeout(dataTimeout);
-        dataTimeout = null;
     }
     
     isAutoModeActive = true;
     lastDataReceived = Date.now();
-    console.log("🤖 Auto mode started");
-    updateAutoStatus('অটো মোড শুরু - ডাটা মনিটরিং...', 'info');
+    updateAutoStatus('অটো মোড শুরু...', 'info');
     
     autoCheckInterval = setInterval(() => {
         if (isAutoModeActive) {
             const now = Date.now();
-            const timeSinceLastData = now - lastDataReceived;
-            
-            if (timeSinceLastData > DATA_TIMEOUT_MS) {
-                updateAutoStatus(`⚠️ ${Math.round(timeSinceLastData/1000)}সে ডাটা নেই - গ্রিড`, 'warning');
-                switchToGridOnTimeout();
+            if (now - lastDataReceived > DATA_TIMEOUT_MS) {
+                updateAutoStatus('ডাটা টাইমআউট', 'warning');
             } else {
                 performAutoCheck();
             }
@@ -699,19 +567,13 @@ function stopAutoMode() {
         clearInterval(autoCheckInterval);
         autoCheckInterval = null;
     }
-    if (dataTimeout) {
-        clearTimeout(dataTimeout);
-        dataTimeout = null;
-    }
     isAutoModeActive = false;
-    console.log("🛑 Auto mode stopped");
     
     const autoStatusDiv = document.getElementById('autoStatus');
     if (autoStatusDiv) autoStatusDiv.classList.add('hidden');
 }
 
-// ==================== Timeout Switch ====================
-async function switchToGridOnTimeout() {
+async function performAutoCheck() {
     const database = window.database;
     const currentUserId = window.currentUserId;
     const currentDeviceId = window.currentDeviceId;
@@ -719,252 +581,23 @@ async function switchToGridOnTimeout() {
     if (!database || !currentUserId || !currentDeviceId || !isAutoModeActive) return;
     
     try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const statusSnapshot = await get(statusRef);
-        const currentStatus = statusSnapshot.val() || {};
-        const currentSource = currentStatus.power_source || 'grid';
-        
-        if (currentSource === 'grid') {
-            updateAutoStatus('✅ গ্রিডে - অপেক্ষা', 'success');
-            return;
-        }
-        
-        console.log('⏰ Timeout - Grid switch');
-        updateAutoStatus('⏰ ডাটা টাইমআউট - গ্রিড', 'warning');
-        
-        await pushCommand('set_power_source', {
-            source: 'grid',
-            reason: 'Data timeout',
-            auto_switch: true
-        });
-        
-        await addControlAlert('warning', `ডাটা টাইমআউট - গ্রিড`);
-        
-    } catch (error) {
-        console.error("Error switching to grid on timeout:", error);
-    }
-}
-
-// ==================== Auto Check ====================
-async function performAutoCheck() {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId || !isAutoModeActive) {
-        if (isAutoModeActive) stopAutoMode();
-        return;
-    }
-    
-    try {
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        const statusSnapshot = await get(statusRef);
-        const currentStatus = statusSnapshot.val() || {};
-        const currentMode = currentStatus.mode || 'manual';
-        
-        if (currentMode !== 'auto') {
-            if (isAutoModeActive) stopAutoMode();
-            return;
-        }
-        
         const currentDataRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/current_data`);
         const dataSnapshot = await get(currentDataRef);
         const data = dataSnapshot.val();
         
-        if (!data) {
-            const timeSinceLastData = Date.now() - lastDataReceived;
-            if (timeSinceLastData > DATA_TIMEOUT_MS) {
-                updateAutoStatus(`⏰ ${Math.round(timeSinceLastData/1000)}সে ডাটা নেই`, 'warning');
-            }
-            return;
+        if (data) {
+            lastDataReceived = Date.now();
+            updateAutoStatus('ডাটা প্রাপ্ত', 'success');
         }
-        
-        lastDataReceived = Date.now();
-        updateAutoStatus('✅ ডাটা প্রাপ্ত', 'success');
-        
-        const solarVoltage = parseFloat(data.solar_voltage) || 0;
-        const batteryVoltage = parseFloat(data.battery_voltage) || 0;
-        const batterySOC = parseFloat(data.battery_soc) || 0;
-        const currentSource = currentStatus.power_source || 'grid';
-        
-        let targetSource = null;
-        let reason = '';
-        let shouldSwitch = false;
-        
-        if (currentSource === 'grid') {
-            if (solarVoltage >= AUTO_THRESHOLDS.SOLAR_GOOD_VOLTAGE) {
-                targetSource = 'solar';
-                reason = `☀️ সোলার ভালো (${solarVoltage.toFixed(1)}V) → সোলার`;
-                shouldSwitch = true;
-            } 
-            else if (batterySOC >= AUTO_THRESHOLDS.BATTERY_GOOD_SOC && batteryVoltage >= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                targetSource = 'battery';
-                reason = `🔋 ব্যাটারি (${batterySOC.toFixed(0)}%) → ব্যাটারি`;
-                shouldSwitch = true;
-            }
-            else {
-                reason = `🏭 গ্রিড (☀️${solarVoltage.toFixed(1)}V, 🔋${batterySOC.toFixed(0)}%)`;
-                updateAutoStatus(reason, 'info');
-            }
-        } 
-        else if (currentSource === 'solar') {
-            if (solarVoltage < AUTO_THRESHOLDS.SOLAR_MIN_VOLTAGE) {
-                if (batterySOC >= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC && batteryVoltage >= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                    targetSource = 'battery';
-                    reason = `☀️ সোলার কম → 🔋 ব্যাটারি (${batterySOC.toFixed(0)}%)`;
-                    shouldSwitch = true;
-                } 
-                else {
-                    targetSource = 'grid';
-                    reason = `☀️ সোলার কম + 🔋 কম → 🏭 গ্রিড`;
-                    shouldSwitch = true;
-                }
-            } 
-            else if (batterySOC <= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC) {
-                targetSource = 'grid';
-                reason = `🔋 কম (${batterySOC.toFixed(0)}%) → 🏭 গ্রিড`;
-                shouldSwitch = true;
-            }
-            else {
-                reason = `☀️ সোলার (${solarVoltage.toFixed(1)}V, 🔋${batterySOC.toFixed(0)}%)`;
-                updateAutoStatus(reason, 'info');
-            }
-        } 
-        else if (currentSource === 'battery') {
-            if (solarVoltage >= AUTO_THRESHOLDS.SOLAR_GOOD_VOLTAGE) {
-                targetSource = 'solar';
-                reason = `☀️ সোলার ভালো → সোলার`;
-                shouldSwitch = true;
-            } 
-            else if (batterySOC <= AUTO_THRESHOLDS.BATTERY_CRITICAL_SOC || batteryVoltage <= AUTO_THRESHOLDS.BATTERY_MIN_VOLTAGE) {
-                targetSource = 'grid';
-                reason = `🔋 কম → 🏭 গ্রিড`;
-                shouldSwitch = true;
-            }
-            else {
-                reason = `🔋 ব্যাটারি (${batterySOC.toFixed(0)}%)`;
-                updateAutoStatus(reason, 'info');
-            }
-        }
-        
-        const autoReasonDiv = document.getElementById('autoReason');
-        const autoReasonText = document.getElementById('autoReasonText');
-        
-        if (autoReasonDiv && autoReasonText && reason) {
-            autoReasonDiv.classList.remove('hidden');
-            autoReasonText.innerHTML = reason;
-        }
-        
-        if (shouldSwitch && targetSource && targetSource !== currentSource) {
-            await executeAutoSwitch(targetSource, reason);
-        }
-        
     } catch (error) {
-        console.error("❌ Auto check error:", error);
-        updateAutoStatus('❌ চেক সমস্যা', 'error');
+        console.error("Auto check error:", error);
     }
 }
 
-// ==================== Auto Switch ====================
-async function executeAutoSwitch(targetSource, reason) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) return;
-    
-    const now = Date.now();
-    if (window.lastAutoSwitchTime && (now - window.lastAutoSwitchTime) < 10000) {
-        console.log("⏳ Cooldown");
-        updateAutoStatus('⏳ সুইচ কুলডাউন', 'warning');
-        return;
-    }
-    window.lastAutoSwitchTime = now;
-    
-    try {
-        updateAutoStatus(`🔄 ${targetSource} এ সুইচ...`, 'info');
-        
-        await pushCommand('set_power_source', {
-            source: targetSource,
-            reason: reason,
-            auto_switch: true
-        });
-        
-        const sourceNames = { solar: '☀️ সোলার', battery: '🔋 ব্যাটারি', grid: '🏭 গ্রিড' };
-        window.showNotification(`🔄 অটো: ${sourceNames[targetSource]}`, 'info');
-        updateAutoStatus(`✅ ${sourceNames[targetSource]}`, 'success');
-        
-        const autoReasonDiv = document.getElementById('autoReason');
-        const autoReasonText = document.getElementById('autoReasonText');
-        if (autoReasonDiv && autoReasonText) {
-            autoReasonDiv.classList.remove('hidden');
-            autoReasonText.innerHTML = reason;
-        }
-        
-        if (window.updatePowerFlowBySource) {
-            window.updatePowerFlowBySource(targetSource);
-        }
-        
-    } catch (error) {
-        console.error("❌ Auto switch error:", error);
-        updateAutoStatus('❌ সুইচ সমস্যা', 'error');
-    }
-}
-
-// ==================== Reset from Emergency ====================
-async function resetFromEmergencyStop(targetMode) {
-    const database = window.database;
-    const currentUserId = window.currentUserId;
-    const currentDeviceId = window.currentDeviceId;
-    
-    if (!database || !currentUserId || !currentDeviceId) {
-        window.showNotification('ডিভাইস সিলেক্ট করুন', 'error');
-        return;
-    }
-    
-    window.showNotification('🔄 সিস্টেম রিসেট...', 'info');
-    
-    try {
-        await pushCommand('reset_system', {
-            mode: targetMode,
-            emergency_reset: true
-        });
-        
-        if (isAutoModeActive) stopAutoMode();
-        
-        if (targetMode === 'auto') {
-            setTimeout(async () => {
-                await startAutoMode();
-                setTimeout(() => performAutoCheck(), 1000);
-                window.showNotification('✅ অটো মোডে রিসেট', 'success');
-            }, 500);
-        } else {
-            window.showNotification('✅ ম্যানুয়াল মোডে রিসেট', 'success');
-        }
-        
-    } catch (error) {
-        console.error("Error resetting:", error);
-        window.showNotification('❌ রিসেট সমস্যা', 'error');
-    }
-}
-
-// ==================== Helper ====================
-function forceAutoCheck() {
-    if (isAutoModeActive) {
-        console.log("🔄 Force auto check...");
-        lastDataReceived = 0;
-        performAutoCheck();
-    }
-}
-
-// ==================== Global Exports ====================
 window.pushCommand = pushCommand;
 window.startAutoMode = startAutoMode;
 window.stopAutoMode = stopAutoMode;
 window.performAutoCheck = performAutoCheck;
-window.forceAutoCheck = forceAutoCheck;
-window.resetFromEmergencyStop = resetFromEmergencyStop;
-window.addControlAlert = addControlAlert;
 window.switchMode = switchMode;
 window.setPowerSource = setPowerSource;
 window.setPowerSourceOff = setPowerSourceOff;
@@ -973,4 +606,4 @@ window.sendBrushCommand = sendBrushCommand;
 window.sendPumpCommand = sendPumpCommand;
 window.updateAutoStatus = updateAutoStatus;
 
-console.log("✅ Control.js - Cleaning Mode সম্পূর্ণ বাদ, ESP32 handle করবে");
+console.log("Control.js - Manual button fix");
