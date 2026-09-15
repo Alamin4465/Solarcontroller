@@ -1,4 +1,6 @@
-// js/dashboard.js - Charging Status শুধু Status Bar-এ
+// js/dashboard.js - SOC calculation JS থেকে (ESP32 থেকে নয়)
+// Battery Full হলে Charging indicator বন্ধ
+// Battery % voltage থেকে calculate হয়
 
 export async function loadDashboard() {
     const content = document.getElementById("content");
@@ -66,6 +68,7 @@ export async function loadDashboard() {
                 </div>
             </div>
             
+            <!-- BATTERY + Charging Status -->
             <div class="status-item">
                 <div class="status-item-left">
                     <i class="fas fa-battery-half"></i>
@@ -199,7 +202,7 @@ export async function loadDashboard() {
     setupSafetyAlertNotification();
 }
 
-// ==================== SOC CALCULATION ====================
+// ==================== SOC CALCULATION (JS থেকে) ====================
 // 11.0V = 0%, 13.7V = 100%
 function calculateSOC(voltage) {
     let soc = ((voltage - 11.0) / 2.7) * 100;
@@ -208,30 +211,57 @@ function calculateSOC(voltage) {
 
 // ==================== BATTERY CHARGING STATUS ====================
 function getBatteryChargeStatus(data) {
-    const batterySOC = parseFloat(data.battery_soc) || 0;
+    // ✅ Voltage থেকে SOC calculate
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+    const batterySOC = calculateSOC(batteryVoltage);
+    
     const batteryCurrent = parseFloat(data.battery_current) || 0;
     const solarCurrent = parseFloat(data.solar_current) || 0;
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     
-    const isCharging = (solarVoltage > 13.0) && (batteryCurrent > 0.1) && (solarCurrent > 0.1);
-    
-    // ✅ Full: 13.7V (আপনার নতুন threshold)
+    // Priority 1: Battery Full
     const isFull = (batterySOC >= 95) || (batteryVoltage >= 13.7);
     
+    // Priority 2: Charging (Full না হলে)
+    const isCharging = !isFull && 
+                       (solarVoltage > 13.0) && 
+                       (batteryCurrent > 0.1) && 
+                       (solarCurrent > 0.1);
+    
+    // Priority 3: Critical / Low
     const isCritical = batterySOC < 15;
     const isLow = batterySOC < 30 && batterySOC >= 15;
     
-    if (isCharging) {
-        return { label: '⚡ চার্জিং', color: '#10b981', className: 'charge-status charging' };
-    } else if (isFull) {
-        return { label: '✅ ফুল', color: '#3b82f6', className: 'charge-status full' };
+    if (isFull) {
+        return {
+            label: '✅ ফুল',
+            color: '#3b82f6',
+            className: 'charge-status full'
+        };
+    } else if (isCharging) {
+        return {
+            label: '⚡ চার্জিং',
+            color: '#10b981',
+            className: 'charge-status charging'
+        };
     } else if (isCritical) {
-        return { label: '🔴 খুব কম', color: '#ef4444', className: 'charge-status critical' };
+        return {
+            label: '🔴 খুব কম',
+            color: '#ef4444',
+            className: 'charge-status critical'
+        };
     } else if (isLow) {
-        return { label: '⚠️ কম', color: '#f59e0b', className: 'charge-status low' };
+        return {
+            label: '⚠️ কম',
+            color: '#f59e0b',
+            className: 'charge-status low'
+        };
     } else {
-        return { label: '⚪ স্বাভাবিক', color: '#94a3b8', className: 'charge-status normal' };
+        return {
+            label: '⚪ স্বাভাবিক',
+            color: '#94a3b8',
+            className: 'charge-status normal'
+        };
     }
 }
 
@@ -329,9 +359,11 @@ function checkAndShowAlert(data, status = null) {
     const alertDiv = document.getElementById('safety_alert');
     if (!alertDiv) return;
     
-    const batterySOC = parseFloat(data.battery_soc) || 0;
-    const solarVoltage = parseFloat(data.solar_voltage) || 0;
+    // ✅ Voltage থেকে SOC calculate
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+    const batterySOC = calculateSOC(batteryVoltage);
+    
+    const solarVoltage = parseFloat(data.solar_voltage) || 0;
     const powerSource = status?.power_source || 'grid';
     
     const effData = calculateEfficiency(data, powerSource);
@@ -359,7 +391,7 @@ function checkAndShowAlert(data, status = null) {
         message = `⚠️ সোলার ভোল্টেজ কম (${solarVoltage.toFixed(1)}V)।`;
         type = 'warning'; icon = 'fa-sun'; show = true;
     }
-    else if (batteryVoltage < 11.5 && batteryVoltage > 0) {       // ✅ 11.5
+    else if (batteryVoltage < 11.5 && batteryVoltage > 0) {
         message = `⚠️ ব্যাটারি ভোল্টেজ কম (${batteryVoltage.toFixed(1)}V)।`;
         type = 'warning'; icon = 'fa-battery-half'; show = true;
     }
@@ -515,10 +547,13 @@ async function fetchDashboardData() {
     }
 }
 
-// ==================== UPDATE UI ====================
+// ==================== UPDATE UI (SOC JS থেকে) ====================
 function updateDashboardUI(data) {
-    const batterySOC = parseFloat(data.battery_soc) || 0;
+    // ✅ Voltage থেকে SOC calculate (ESP32 থেকে নয়)
+    const batteryVoltage = parseFloat(data.battery_voltage) || 0;
+    const batterySOC = calculateSOC(batteryVoltage);
     
+    // Battery SOC display
     const batterySocElement = document.getElementById('battery_soc');
     if (batterySocElement) batterySocElement.textContent = batterySOC.toFixed(1) + '%';
     
@@ -528,9 +563,9 @@ function updateDashboardUI(data) {
     const batteryPercentageText = document.getElementById('batteryPercentageText');
     if (batteryPercentageText) batteryPercentageText.textContent = batterySOC.toFixed(1) + '%';
     
+    // Battery Voltage display
     const batteryVoltageElement = document.getElementById('battery_voltage');
     if (batteryVoltageElement) {
-        const batteryVoltage = parseFloat(data.battery_voltage) || 0;
         batteryVoltageElement.innerHTML = batteryVoltage.toFixed(2) + ' <span class="unit">V</span>';
     }
     
@@ -581,7 +616,7 @@ function updateSystemStatusUI(status) {
         } else if (mode === 'manual') {
             modeIndicator.textContent = '👤 ম্যানুয়াল মোড';
             modeIndicator.className = 'manual-indicator';
-        } else if (mode === 'stop') {
+        } else if (mode === 'stop' || mode === 'emergency') {
             modeIndicator.textContent = '⛔ জরুরি বন্ধ';
             modeIndicator.className = 'stop-indicator';
         }
@@ -772,4 +807,4 @@ alertStyles.textContent = `
 `;
 document.head.appendChild(alertStyles);
 
-console.log("✅ Dashboard.js - SOC Linear (11.0-13.7V)");
+console.log("✅ Dashboard.js - SOC JS থেকে calculate হয়, Battery Full হলে Charging বন্ধ");
