@@ -1,5 +1,5 @@
 // js/dashboard.js - SOC calculation JS থেকে (ESP32 থেকে নয়)
-// ✅ ESP32 v6.7.2 aligned — User/Device ID match
+// ✅ ESP32 v6.8.9 ALIGNED — Priority loop + Speed aligned
 // Battery Full হলে Charging indicator বন্ধ
 // Battery % voltage থেকে calculate হয়
 
@@ -202,8 +202,7 @@ export async function loadDashboard() {
     setupSafetyAlertNotification();
 }
 
-// ==================== SOC CALCULATION (JS থেকে) ====================
-// ✅ ESP32 v6.7.2 aligned: 11.0V = 0%, 13.7V = 100%
+// ==================== SOC CALCULATION ====================
 function calculateSOC(voltage) {
     let soc = ((voltage - 11.0) / 2.7) * 100;
     return Math.max(0, Math.min(100, soc));
@@ -213,59 +212,24 @@ function calculateSOC(voltage) {
 function getBatteryChargeStatus(data) {
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
     const batterySOC = calculateSOC(batteryVoltage);
-    
     const batteryCurrent = parseFloat(data.battery_current) || 0;
     const solarCurrent = parseFloat(data.solar_current) || 0;
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     
-    // ✅ ESP32 v6.7.2 aligned — Battery Full: 13.7V
     const isFull = (batterySOC >= 95) || (batteryVoltage >= 13.7);
-    
-    // Charging check
-    const isCharging = !isFull && 
-                       (solarVoltage > 13.0) && 
-                       (batteryCurrent > 0.1) && 
-                       (solarCurrent > 0.1);
-    
+    const isCharging = !isFull && (solarVoltage > 13.0) && (batteryCurrent > 0.1) && (solarCurrent > 0.1);
     const isCritical = batterySOC < 15;
     const isLow = batterySOC < 30 && batterySOC >= 15;
     
-    if (isFull) {
-        return {
-            label: '✅ ফুল',
-            color: '#3b82f6',
-            className: 'charge-status full'
-        };
-    } else if (isCharging) {
-        return {
-            label: '⚡ চার্জিং',
-            color: '#10b981',
-            className: 'charge-status charging'
-        };
-    } else if (isCritical) {
-        return {
-            label: '🔴 খুব কম',
-            color: '#ef4444',
-            className: 'charge-status critical'
-        };
-    } else if (isLow) {
-        return {
-            label: '⚠️ কম',
-            color: '#f59e0b',
-            className: 'charge-status low'
-        };
-    } else {
-        return {
-            label: '⚪ স্বাভাবিক',
-            color: '#94a3b8',
-            className: 'charge-status normal'
-        };
-    }
+    if (isFull) return { label: '✅ ফুল', color: '#3b82f6', className: 'charge-status full' };
+    else if (isCharging) return { label: '⚡ চার্জিং', color: '#10b981', className: 'charge-status charging' };
+    else if (isCritical) return { label: '🔴 খুব কম', color: '#ef4444', className: 'charge-status critical' };
+    else if (isLow) return { label: '⚠️ কম', color: '#f59e0b', className: 'charge-status low' };
+    else return { label: '⚪ স্বাভাবিক', color: '#94a3b8', className: 'charge-status normal' };
 }
 
 function updateChargingStatusUI(data) {
     const statusData = getBatteryChargeStatus(data);
-    
     const chargeStatusEl = document.getElementById('battery_charge_status');
     if (chargeStatusEl) {
         chargeStatusEl.textContent = statusData.label;
@@ -287,17 +251,13 @@ function calculateEfficiency(data, powerSource) {
         const solarVoltage = parseFloat(data.solar_voltage) || 0;
         const solarCurrent = parseFloat(data.solar_current) || 0;
         inputPower = solarVoltage * solarCurrent;
-        if (inputPower > 0.1) {
-            efficiency = Math.min((outputPower / inputPower) * 100, 95);
-        }
+        if (inputPower > 0.1) efficiency = Math.min((outputPower / inputPower) * 100, 95);
     } 
     else if (powerSource === 'battery') {
         const batteryVoltage = parseFloat(data.battery_voltage) || 0;
         const batteryCurrent = parseFloat(data.battery_current) || 0;
         inputPower = batteryVoltage * batteryCurrent;
-        if (inputPower > 0.1) {
-            efficiency = Math.min((outputPower / inputPower) * 100, 98);
-        }
+        if (inputPower > 0.1) efficiency = Math.min((outputPower / inputPower) * 100, 98);
     } 
     else if (powerSource === 'grid') {
         inputPower = outputPower / 0.95;
@@ -358,7 +318,6 @@ function checkAndShowAlert(data, status = null) {
     
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
     const batterySOC = calculateSOC(batteryVoltage);
-    
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     const powerSource = status?.power_source || 'grid';
     
@@ -484,21 +443,14 @@ function updateCleaningStatus(data) {
     let statusText = '', dotColor = '', dotClass = '', statusColor = '';
     
     if (cleaningStatus === 'active') {
-        if (brushStatus === 'forward') {
-            statusText = '🔄 ফরওয়ার্ড'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981';
-        } else if (brushStatus === 'reverse') {
-            statusText = '🔄 রিভার্স'; dotColor = '#f59e0b'; dotClass = 'dot-active'; statusColor = '#f59e0b';
-        } else {
-            statusText = '🧹 চলমান'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981';
-        }
+        if (brushStatus === 'forward') { statusText = '🔄 ফরওয়ার্ড'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981'; }
+        else if (brushStatus === 'reverse') { statusText = '🔄 রিভার্স'; dotColor = '#f59e0b'; dotClass = 'dot-active'; statusColor = '#f59e0b'; }
+        else { statusText = '🧹 চলমান'; dotColor = '#10b981'; dotClass = 'dot-active'; statusColor = '#10b981'; }
     } else if (cleaningStatus === 'paused') {
         statusText = '⏸ বিরতি'; dotColor = '#f59e0b'; dotClass = 'dot-paused'; statusColor = '#f59e0b';
     } else {
-        if (isAutoMode) {
-            statusText = '🤖 অটো'; dotColor = '#60a5fa'; dotClass = 'dot-auto-idle'; statusColor = '#60a5fa';
-        } else {
-            statusText = '⏹ নিষ্ক্রিয়'; dotColor = '#6b7280'; dotClass = 'dot-idle'; statusColor = '#6b7280';
-        }
+        if (isAutoMode) { statusText = '🤖 অটো'; dotColor = '#60a5fa'; dotClass = 'dot-auto-idle'; statusColor = '#60a5fa'; }
+        else { statusText = '⏹ নিষ্ক্রিয়'; dotColor = '#6b7280'; dotClass = 'dot-idle'; statusColor = '#6b7280'; }
     }
     
     cleaningIndicator.textContent = statusText;
@@ -543,9 +495,8 @@ async function fetchDashboardData() {
     }
 }
 
-// ==================== UPDATE UI (SOC JS থেকে) ====================
+// ==================== UPDATE UI ====================
 function updateDashboardUI(data) {
-    // ✅ Voltage থেকে SOC calculate (ESP32 aligned)
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
     const batterySOC = calculateSOC(batteryVoltage);
     
@@ -750,49 +701,14 @@ alertStyles.textContent = `
     .cleaning-dot.dot-idle { opacity: 0.4; }
     @keyframes dotPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } }
     
-    .charge-status {
-        font-size: 11px;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 12px;
-        margin-left: 6px;
-        transition: all 0.3s ease;
-        display: inline-block;
-    }
+    .charge-status { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 12px; margin-left: 6px; transition: all 0.3s ease; display: inline-block; }
+    .charge-status.charging { animation: chargePulse 1.5s ease-in-out infinite; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); }
+    .charge-status.full { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); }
+    .charge-status.low { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); animation: warningBlink 2s ease-in-out infinite; }
+    .charge-status.critical { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); animation: criticalBlink 1s ease-in-out infinite; }
+    .charge-status.normal { background: rgba(148, 163, 184, 0.1); border: 1px solid rgba(148, 163, 184, 0.3); }
     
-    .charge-status.charging {
-        animation: chargePulse 1.5s ease-in-out infinite;
-        background: rgba(16, 185, 129, 0.15);
-        border: 1px solid rgba(16, 185, 129, 0.4);
-    }
-    
-    .charge-status.full {
-        background: rgba(59, 130, 246, 0.15);
-        border: 1px solid rgba(59, 130, 246, 0.4);
-    }
-    
-    .charge-status.low {
-        background: rgba(245, 158, 11, 0.15);
-        border: 1px solid rgba(245, 158, 11, 0.4);
-        animation: warningBlink 2s ease-in-out infinite;
-    }
-    
-    .charge-status.critical {
-        background: rgba(239, 68, 68, 0.15);
-        border: 1px solid rgba(239, 68, 68, 0.4);
-        animation: criticalBlink 1s ease-in-out infinite;
-    }
-    
-    .charge-status.normal {
-        background: rgba(148, 163, 184, 0.1);
-        border: 1px solid rgba(148, 163, 184, 0.3);
-    }
-    
-    @keyframes chargePulse {
-        0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(16, 185, 129, 0); }
-        50% { transform: scale(1.05); box-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
-    }
-    
+    @keyframes chargePulse { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(16, 185, 129, 0); } 50% { transform: scale(1.05); box-shadow: 0 0 10px rgba(16, 185, 129, 0.5); } }
     @keyframes warningBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
     @keyframes criticalBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     
@@ -801,4 +717,4 @@ alertStyles.textContent = `
 `;
 document.head.appendChild(alertStyles);
 
-console.log("✅ Dashboard.js v2.0 - ESP32 v6.7.2 aligned");
+console.log("✅ Dashboard.js v2.1 - ESP32 v6.8.9 (Priority loop + Speed aligned)");
