@@ -1,18 +1,18 @@
-// js/main.js - Multiple ESP32 Support (এক User, একাধিক Device)
-// ✅ ESP32 v6.7.2 ALIGNED — User ID এবং Device ID exactly ESP32 এর মতো generate হয়
+// js/main.js - Multiple ESP32 Support
+// ✅ ESP32 v6.8.9 ALIGNED — Priority loop + Fast lookup
+// ✅ v13.2 — Direct user lookup (fast, low Firebase cost)
+// ✅ Fixed: login.html auth flow, onAuthStateChanged integration
 
 import { initializeApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
 import { getDatabase, ref, set, get, update, push, onValue, goOnline, goOffline } from "firebase/database";
 
-// Import page loaders
 import { loadDashboard } from './dashboard.js';
 import { loadControl } from './control.js';
 import { loadAnalysis } from './analysis.js';
 import { setupSettings } from './settings.js';
 import { loadProfile } from './profile.js';
 
-// Firebase Configuration
 const firebaseConfig = {
     apiKey: "AIzaSyBP9zk3Y8wBBCfvnRKmcExMP-uIbINuTwc",
     authDomain: "solar-panel-c798c.firebaseapp.com",
@@ -37,22 +37,15 @@ window.push = push;
 window.onValue = onValue;
 window.signOut = signOut;
 
-// Global Variables
 let currentUser = null;
 let currentUserId = null;
 let currentDeviceId = null;
 let deviceManager = null;
 let userDevices = {};
 
-// ==================== ✅ ESP32 v6.7.2 ALIGNED — ID GENERATION ====================
-
-// ESP32 এ: String fullUserId = "SolarController_" + emailPrefix;
-// যেখানে emailPrefix capitalized (প্রথম letter uppercase)
-// Example: email = "alamin@gmail.com" → emailPrefix = "Alamin" → "SolarController_Alamin"
+// ==================== ID GENERATION (ESP32 ALIGNED) ====================
 function generateUserIdFromEmail(email) {
-    if (!email || !email.includes('@')) {
-        return "SolarController_Unknown";
-    }
+    if (!email || !email.includes('@')) return "SolarController_Unknown";
     let emailPrefix = email.substring(0, email.indexOf('@'));
     if (emailPrefix.length > 0) {
         const firstChar = emailPrefix.charAt(0).toUpperCase();
@@ -61,12 +54,8 @@ function generateUserIdFromEmail(email) {
     return `SolarController_${emailPrefix}`;
 }
 
-// ESP32 এ: String did = "ESP32_Solar_" + emailPrefix;
-// Example: email = "alamin@gmail.com" → "ESP32_Solar_Alamin"
 function generateDeviceIdFromEmail(email) {
-    if (!email || !email.includes('@')) {
-        return "ESP32_Solar_Unknown";
-    }
+    if (!email || !email.includes('@')) return "ESP32_Solar_Unknown";
     let emailPrefix = email.substring(0, email.indexOf('@'));
     if (emailPrefix.length > 0) {
         const firstChar = emailPrefix.charAt(0).toUpperCase();
@@ -116,19 +105,16 @@ function showNotification(message, type = "info") {
 }
 window.showNotification = showNotification;
 
-// ==================== বিদ্যমান Data খোঁজা ====================
+// ==================== DIRECT USER LOOKUP ====================
 async function getExistingUserByEmail(email) {
     try {
-        const usersRef = ref(database, 'Users');
-        const snapshot = await get(usersRef);
+        const userId = generateUserIdFromEmail(email);
+        const userRef = ref(database, `Users/${userId}`);
+        const snapshot = await get(userRef);
         
         if (snapshot.exists()) {
-            const users = snapshot.val();
-            for (const [userId, userData] of Object.entries(users)) {
-                if (userData && userData.email === email) {
-                    return { userId, userData };
-                }
-            }
+            const userData = snapshot.val();
+            if (userData.email === email) return { userId, userData };
         }
         return null;
     } catch (error) {
@@ -137,15 +123,11 @@ async function getExistingUserByEmail(email) {
     }
 }
 
-// ✅ সব Device list আনা
 async function getUserDevices(userId) {
     try {
         const devicesRef = ref(database, `Devices/${userId}`);
         const snapshot = await get(devicesRef);
-        
-        if (snapshot.exists()) {
-            return snapshot.val();
-        }
+        if (snapshot.exists()) return snapshot.val();
         return {};
     } catch (error) {
         console.error("Error getting devices:", error);
@@ -153,7 +135,7 @@ async function getUserDevices(userId) {
     }
 }
 
-// ==================== ডাটা স্ট্রাকচার ====================
+// ==================== Data Structure ====================
 async function ensureDataStructure(devicePath) {
     try {
         const dataPath = `${devicePath}/data`;
@@ -188,10 +170,7 @@ async function ensureDataStructure(devicePath) {
                     last_updated: Date.now()
                 }
             },
-            last_command: {},
-            alerts: [],
-            history: [],
-            commands: {}
+            last_command: {}, alerts: [], history: [], commands: {}
         };
         
         if (!dataSnapshot.exists()) {
@@ -218,16 +197,6 @@ async function ensureDataStructure(devicePath) {
                 if (!existingData.settings.battery_cutoff) { existingData.settings.battery_cutoff = defaultData.settings.battery_cutoff; needsUpdate = true; }
             }
             
-            if (existingData.current_data) {
-                const cd = existingData.current_data;
-                if (cd.load_current === undefined) { cd.load_current = cd.battery_current || 0; needsUpdate = true; }
-                if (cd.brush_status === undefined) { cd.brush_status = 'stopped'; needsUpdate = true; }
-                if (cd.pump_status === undefined) { cd.pump_status = 'off'; needsUpdate = true; }
-                if (cd.cleaning_status === undefined) { cd.cleaning_status = 'inactive'; needsUpdate = true; }
-                if (cd.dust_level !== undefined) { delete cd.dust_level; needsUpdate = true; }
-                if (cd.efficiency !== undefined) { delete cd.efficiency; needsUpdate = true; }
-            }
-            
             if (needsUpdate) {
                 await set(dataRef, existingData);
                 console.log("✅ Data structure updated");
@@ -240,7 +209,7 @@ async function ensureDataStructure(devicePath) {
     }
 }
 
-// ==================== DEVICE MANAGER CLASS ====================
+// ==================== DEVICE MANAGER ====================
 class DeviceManager {
     constructor() {
         this.currentUserId = null;
@@ -251,34 +220,24 @@ class DeviceManager {
 
     async initialize(user, userData = {}) {
         if (!user || !database) return false;
-
         try {
             this.userEmail = user.email;
             this.userName = userData.userName || user.displayName || this.formatDisplayName(this.userEmail);
-            
-            // ✅ ESP32 v6.7.2 ALIGNED — User ID: SolarController_{CapitalizedEmailPrefix}
             this.currentUserId = generateUserIdFromEmail(this.userEmail);
-            console.log("✅ User ID (ESP32 aligned):", this.currentUserId);
-            
-            // ✅ ESP32 v6.7.2 ALIGNED — Device ID: ESP32_Solar_{CapitalizedEmailPrefix}
             this.currentDeviceId = generateDeviceIdFromEmail(this.userEmail);
-            console.log("✅ Device ID (ESP32 aligned):", this.currentDeviceId);
             
-            // সব device list আনা
+            console.log("✅ User ID:", this.currentUserId);
+            console.log("✅ Device ID:", this.currentDeviceId);
+            
             userDevices = await getUserDevices(this.currentUserId);
             console.log("📱 Devices found:", Object.keys(userDevices).length);
             
-            // User তৈরি/আপডেট
             await this.createOrLoadUser();
-            
-            // Device তৈরি/আপডেট
             await this.createOrLoadDevice();
             
-            // Data structure
             const devicePath = `Devices/${this.currentUserId}/${this.currentDeviceId}`;
             await ensureDataStructure(devicePath);
             
-            // Global set
             window.currentUserId = this.currentUserId;
             window.currentDeviceId = this.currentDeviceId;
             window.currentUser = user;
@@ -286,14 +245,8 @@ class DeviceManager {
             window.userName = this.userName;
             window.userDevices = userDevices;
             
-            console.log("✅ Initialized:", {
-                userId: this.currentUserId,
-                deviceId: this.currentDeviceId,
-                totalDevices: Object.keys(userDevices).length
-            });
-            
+            console.log("✅ Initialized:", { userId: this.currentUserId, deviceId: this.currentDeviceId });
             return true;
-            
         } catch (error) {
             console.error("DeviceManager error:", error);
             showNotification('সিস্টেম ইনিশিয়ালাইজ সমস্যা: ' + error.message, 'error');
@@ -303,9 +256,7 @@ class DeviceManager {
     
     formatDisplayName(email) {
         let username = email.split('@')[0];
-        if (username.length > 0) {
-            return username.charAt(0).toUpperCase() + username.slice(1);
-        }
+        if (username.length > 0) return username.charAt(0).toUpperCase() + username.slice(1);
         return "User";
     }
 
@@ -315,24 +266,17 @@ class DeviceManager {
             const snapshot = await get(userRef);
             
             if (!snapshot.exists()) {
-                const userData = {
-                    user_name: this.userName,
-                    email: this.userEmail,
-                    created_at: Date.now(),
-                    last_login: Date.now(),
-                    status: 'active'
-                };
-                await set(userRef, userData);
+                await set(userRef, {
+                    user_name: this.userName, email: this.userEmail,
+                    created_at: Date.now(), last_login: Date.now(), status: 'active'
+                });
                 showNotification(`ইউজার তৈরি হয়েছে`, 'success');
             } else {
                 await update(userRef, { last_login: Date.now() });
                 showNotification(`স্বাগতম, ${this.userName}!`, 'success');
             }
             return true;
-        } catch (error) {
-            console.error("User error:", error);
-            return false;
-        }
+        } catch (error) { console.error("User error:", error); return false; }
     }
 
     async createOrLoadDevice() {
@@ -342,11 +286,9 @@ class DeviceManager {
             
             const deviceInfo = {
                 device_name: userDevices[this.currentDeviceId]?.device_name || "Solar Controller",
-                user_id: this.currentUserId,
-                user_email: this.userEmail,
+                user_id: this.currentUserId, user_email: this.userEmail,
                 created_at: userDevices[this.currentDeviceId]?.created_at || Date.now(),
-                last_updated: Date.now(),
-                status: 'active'
+                last_updated: Date.now(), status: 'active'
             };
             
             const snapshot = await get(deviceRef);
@@ -357,25 +299,20 @@ class DeviceManager {
                 await update(deviceRef, { last_updated: Date.now() });
             }
             return true;
-        } catch (error) {
-            console.error("Device error:", error);
-            return false;
-        }
+        } catch (error) { console.error("Device error:", error); return false; }
     }
 
     getCurrentDeviceId() { return this.currentDeviceId; }
     getCurrentUserId() { return this.currentUserId; }
-    
     cleanup() { console.log("🧹 Cleaned up"); }
 }
 
-// ==================== ✅ DEVICE SWITCHER UI ====================
+// ==================== DEVICE SWITCHER UI ====================
 window.showDeviceSelector = function() {
     const content = document.getElementById("content");
     if (!content) return;
     
     const deviceIds = Object.keys(userDevices);
-    
     let html = `
         <div class="device-selector-container">
             <div class="device-selector-header">
@@ -383,28 +320,18 @@ window.showDeviceSelector = function() {
                 <h2>আপনার ডিভাইস সমূহ</h2>
                 <p>যে ডিভাইস কন্ট্রোল করতে চান সেটা সিলেক্ট করুন</p>
             </div>
-            
             <div class="device-list">
     `;
     
     if (deviceIds.length === 0) {
-        html += `
-            <div class="no-devices">
-                <i class="fas fa-inbox"></i>
-                <p>কোনো ডিভাইস নেই</p>
-                <p style="font-size: 12px; color: #64748b;">ESP32 যোগ করতে নিচের বাটন চাপুন</p>
-            </div>
-        `;
+        html += `<div class="no-devices"><i class="fas fa-inbox"></i><p>কোনো ডিভাইস নেই</p></div>`;
     } else {
         deviceIds.forEach(deviceId => {
             const device = userDevices[deviceId];
             const isActive = deviceId === window.currentDeviceId;
-            
             html += `
                 <div class="device-card ${isActive ? 'active' : ''}" data-device-id="${deviceId}">
-                    <div class="device-icon">
-                        <i class="fas fa-microchip"></i>
-                    </div>
+                    <div class="device-icon"><i class="fas fa-microchip"></i></div>
                     <div class="device-info">
                         <div class="device-name">${device.device_name || deviceId}</div>
                         <div class="device-id">${deviceId.substring(0, 30)}...</div>
@@ -418,7 +345,6 @@ window.showDeviceSelector = function() {
     
     html += `
             </div>
-            
             <button class="add-device-btn" onclick="window.addNewDevice()">
                 <i class="fas fa-plus"></i> নতুন ডিভাইস যোগ করুন
             </button>
@@ -426,34 +352,22 @@ window.showDeviceSelector = function() {
     `;
     
     content.innerHTML = html;
-    
     document.querySelectorAll('.device-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const deviceId = card.dataset.deviceId;
-            window.switchDevice(deviceId);
-        });
+        card.addEventListener('click', () => window.switchDevice(card.dataset.deviceId));
     });
 };
 
-// ==================== ✅ Switch Device ====================
 window.switchDevice = function(deviceId) {
     if (!deviceId || !userDevices[deviceId]) return;
-    
     localStorage.setItem('selectedDeviceId', deviceId);
     window.currentDeviceId = deviceId;
-    
     showNotification('ডিভাইস পরিবর্তন হচ্ছে...', 'info');
-    setTimeout(() => {
-        window.location.reload();
-    }, 800);
+    setTimeout(() => window.location.reload(), 800);
 };
 
-// ==================== ✅ Add New Device ====================
 window.addNewDevice = function() {
     const content = document.getElementById("content");
     if (!content) return;
-    
-    // Auto-fill current device ID
     const autoDeviceId = window.currentDeviceId || '';
     
     content.innerHTML = `
@@ -461,22 +375,16 @@ window.addNewDevice = function() {
             <div class="add-device-header">
                 <i class="fas fa-plus-circle"></i>
                 <h2>নতুন ডিভাইস যোগ করুন</h2>
-                <p>ESP32 এর জন্য একটা নাম দিন</p>
             </div>
-            
             <div class="add-device-form">
                 <div class="form-group">
                     <label>প্রজেক্টের নাম</label>
                     <input type="text" id="newDeviceName" placeholder="যেমন: ঘরের সোলার সিস্টেম">
-                    <small>এই নাম দিয়ে আপনি ডিভাইস চিনবেন</small>
                 </div>
-                
                 <div class="form-group">
                     <label>ESP32 Device ID</label>
                     <input type="text" id="newDeviceId" placeholder="ESP32_Solar_XXXX" value="${autoDeviceId}">
-                    <small>ESP32 এর Serial Monitor এ "Device ID: xxx" দেখুন</small>
                 </div>
-                
                 <div class="button-group">
                     <button class="btn-cancel" onclick="window.showDeviceSelector()">বাতিল</button>
                     <button class="btn-save" onclick="window.saveNewDevice()">সংরক্ষণ</button>
@@ -486,25 +394,15 @@ window.addNewDevice = function() {
     `;
 };
 
-// ==================== ✅ Save New Device ====================
 window.saveNewDevice = async function() {
     const deviceName = document.getElementById('newDeviceName')?.value?.trim();
     const deviceId = document.getElementById('newDeviceId')?.value?.trim();
     
-    if (!deviceName) {
-        showNotification('ডিভাইসের নাম দিন', 'error');
-        return;
-    }
-    
-    if (!deviceId) {
-        showNotification('Device ID দিন', 'error');
-        return;
-    }
+    if (!deviceName || !deviceId) { showNotification('সব তথ্য দিন', 'error'); return; }
     
     try {
         const devicePath = `Devices/${window.currentUserId}/${deviceId}`;
         const deviceRef = ref(database, devicePath);
-        
         const snapshot = await get(deviceRef);
         if (snapshot.exists() && userDevices[deviceId]) {
             showNotification('এই Device ID আগেই যোগ আছে', 'warning');
@@ -512,23 +410,13 @@ window.saveNewDevice = async function() {
         }
         
         await set(deviceRef, {
-            device_name: deviceName,
-            user_id: window.currentUserId,
-            user_email: window.userEmail,
-            created_at: Date.now(),
-            status: 'active'
+            device_name: deviceName, user_id: window.currentUserId,
+            user_email: window.userEmail, created_at: Date.now(), status: 'active'
         });
-        
         await ensureDataStructure(devicePath);
-        
         userDevices[deviceId] = { device_name: deviceName, created_at: Date.now() };
-        
         showNotification('ডিভাইস যোগ হয়েছে ✅', 'success');
-        
-        setTimeout(() => {
-            window.switchDevice(deviceId);
-        }, 1000);
-        
+        setTimeout(() => window.switchDevice(deviceId), 1000);
     } catch (error) {
         console.error("Add device error:", error);
         showNotification('ডিভাইস যোগ করতে সমস্যা ❌', 'error');
@@ -539,7 +427,6 @@ window.saveNewDevice = async function() {
 function navigateTo(page) {
     const buttons = document.querySelectorAll(".nav-btn");
     const indicator = document.querySelector(".indicator");
-
     buttons.forEach(btn => btn.classList.remove("active"));
 
     const targetBtn = document.querySelector(`[data-page="${page}"]`);
@@ -562,12 +449,11 @@ function navigateTo(page) {
         default: loadDashboard();
     }
 }
-
 window.navigateTo = navigateTo;
 
 // ==================== AUTH STATE OBSERVER ====================
 onAuthStateChanged(auth, async (user) => {
-    console.log("Auth state:", user ? user.email : "No user");
+    console.log("🔥 Auth:", user ? user.email : "No user");
     
     if (user) {
         currentUser = user;
@@ -575,10 +461,8 @@ onAuthStateChanged(auth, async (user) => {
         
         try {
             deviceManager = new DeviceManager();
-            
             const urlParams = new URLSearchParams(window.location.search);
             const userName = urlParams.get('userName') || user.displayName || "";
-            
             const userData = { userName: userName };
             
             const success = await deviceManager.initialize(user, userData);
@@ -593,24 +477,24 @@ onAuthStateChanged(auth, async (user) => {
                 window.currentUserEmail = user.email;
                 
                 if (Object.keys(userDevices).length > 1) {
-                    setTimeout(() => {
-                        hideAuthLoadingScreen();
-                        window.showDeviceSelector();
-                    }, 500);
+                    setTimeout(() => { hideAuthLoadingScreen(); window.showDeviceSelector(); }, 300);
                 } else {
                     if (typeof setupSettings === 'function') setupSettings();
-                    setTimeout(() => {
-                        hideAuthLoadingScreen();
-                        navigateTo("dashboard");
-                    }, 500);
+                    setTimeout(() => { hideAuthLoadingScreen(); navigateTo("dashboard"); }, 300);
                 }
+            } else {
+                updateAuthStatus("❌ Initialization failed", true);
             }
         } catch (error) {
-            console.error("Initialization error:", error);
+            console.error("❌ Init error:", error);
             showNotification("সিস্টেম ইনিশিয়ালাইজ ব্যর্থ: " + error.message, "error");
         }
     } else {
-        setTimeout(() => window.location.href = "login.html", 1500);
+        console.log("🔒 No user, redirecting...");
+        const currentPage = window.location.pathname;
+        if (!currentPage.includes("login.html")) {
+            setTimeout(() => { window.location.href = "login.html"; }, 800);
+        }
     }
 });
 
@@ -641,9 +525,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     
-    document.addEventListener("click", () => { 
-        if (dropdown) dropdown.style.display = "none"; 
-    });
+    document.addEventListener("click", () => { if (dropdown) dropdown.style.display = "none"; });
     
     document.getElementById("deviceMenuBtn")?.addEventListener("click", (e) => {
         e.preventDefault();
@@ -651,12 +533,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     
     document.getElementById("profileMenuBtn")?.addEventListener("click", (e) => { 
-        e.preventDefault();
-        navigateTo("profile"); 
+        e.preventDefault(); navigateTo("profile"); 
     });
     document.getElementById("settingsMenuBtn")?.addEventListener("click", (e) => { 
-        e.preventDefault();
-        navigateTo("settings"); 
+        e.preventDefault(); navigateTo("settings"); 
     });
     document.getElementById("logoutMenuBtn")?.addEventListener("click", async () => {
         if (confirm("লগআউট করবেন?")) {
@@ -679,4 +559,4 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-console.log("✅ Main.js v13.0 - ESP32 v6.7.2 ALIGNED (UserID + DeviceID match)");
+console.log("✅ Main.js v13.2 - ESP32 v6.8.9 ALIGNED (Priority loop + Fast lookup)");
