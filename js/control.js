@@ -1,7 +1,7 @@
 // js/control.js - Emergency reset + Auto re-arm + Manual source re-activation
-// ✅ ESP32 v6.7.2 ALIGNED — User ID & Device ID exactly ESP32 এর মতো
-// Emergency stop করার পর → Auto click করলে reset হয়
-// Manual এ source দিলে আগের state clear হয়ে নতুন source active হয়
+// ✅ ESP32 v6.8.9 ALIGNED — Priority loop + Fast commands
+// ✅ v2.3 — Faster command ack (2s timeout, was 3s)
+// ✅ v2.3 — Duplicate prevention + Ack-aware
 
 import { ref, onValue, get, push, update, set } from 'firebase/database';
 
@@ -36,8 +36,70 @@ async function pushCommand(action, extraData = {}) {
         sent_at: Date.now()
     });
     
-    console.log(`Command: ${action}`, extraData);
+    console.log(`📤 Command sent: ${action}`, extraData);
     return newCommandRef.key;
+}
+
+// ==================== ✅ v2.3 — Wait for Ack (2s timeout for v6.8.9 speed) ====================
+
+async function waitForModeChange(expectedMode, timeout = 2000) {
+    const database = window.database;
+    const currentUserId = window.currentUserId;
+    const currentDeviceId = window.currentDeviceId;
+    
+    if (!database || !currentUserId || !currentDeviceId) return false;
+    
+    const startTime = Date.now();
+    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
+    
+    while (Date.now() - startTime < timeout) {
+        try {
+            const snapshot = await get(statusRef);
+            if (snapshot.exists()) {
+                const status = snapshot.val();
+                if (status.mode === expectedMode) {
+                    console.log(`✅ Mode confirmed: ${expectedMode} (${Date.now() - startTime}ms)`);
+                    return true;
+                }
+            }
+        } catch (e) {
+            console.warn("waitForModeChange error:", e);
+        }
+        await new Promise(r => setTimeout(r, 150));
+    }
+    
+    console.warn(`⚠️ Mode change timeout: ${expectedMode} (waited ${timeout}ms)`);
+    return false;
+}
+
+async function waitForPowerSource(expectedSource, timeout = 2000) {
+    const database = window.database;
+    const currentUserId = window.currentUserId;
+    const currentDeviceId = window.currentDeviceId;
+    
+    if (!database || !currentUserId || !currentDeviceId) return false;
+    
+    const startTime = Date.now();
+    const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
+    
+    while (Date.now() - startTime < timeout) {
+        try {
+            const snapshot = await get(statusRef);
+            if (snapshot.exists()) {
+                const status = snapshot.val();
+                if (status.power_source === expectedSource) {
+                    console.log(`✅ Power source confirmed: ${expectedSource} (${Date.now() - startTime}ms)`);
+                    return true;
+                }
+            }
+        } catch (e) {
+            console.warn("waitForPowerSource error:", e);
+        }
+        await new Promise(r => setTimeout(r, 150));
+    }
+    
+    console.warn(`⚠️ Power source timeout: ${expectedSource}`);
+    return false;
 }
 
 // ==================== Global State ====================
@@ -47,19 +109,19 @@ let isAutoModeActive = false;
 let autoCheckInterval = null;
 let lastDataReceived = 0;
 let dataTimeout = null;
+let commandInProgress = false;
 
 const DATA_TIMEOUT_MS = 15000;
 const CHECK_INTERVAL_MS = 5000;
 
-// ✅ ESP32 v6.7.2 aligned thresholds
-const AUTO_THRESHOLDS = {
+const AUTO_THRESHOLDS = Object.freeze({
     SOLAR_MIN_VOLTAGE: 12.5,
-    SOLAR_GOOD_VOLTAGE: 13.5,       // ✅ ESP32: SOLAR_GOOD_V = 13.5
-    BATTERY_MIN_VOLTAGE: 11.8,      // ✅ ESP32: BATTERY_MIN_V = 11.8
+    SOLAR_GOOD_VOLTAGE: 13.5,
+    BATTERY_MIN_VOLTAGE: 11.8,
     BATTERY_CRITICAL_SOC: 25,
     BATTERY_GOOD_SOC: 40,
     CHECK_INTERVAL: 5000
-};
+});
 window.AUTO_THRESHOLDS = AUTO_THRESHOLDS;
 
 // ==================== Main Control Loader ====================
@@ -194,7 +256,6 @@ function setupControlListeners() {
     document.getElementById('pumpOffBtn')?.addEventListener('click', () => sendPumpCommand('off'));
 }
 
-// ==================== Last Command Listener ====================
 function setupLastCommandListener() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -259,7 +320,6 @@ function updateLastCommandDisplay(cmd) {
     }
 }
 
-// ==================== Status Listeners ====================
 function setupControlStatusListeners() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -267,7 +327,6 @@ function setupControlStatusListeners() {
     
     if (!database || !currentUserId || !currentDeviceId) return;
     
-    // Track actual state from ESP32 (source of truth)
     const systemStatusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
     onValue(systemStatusRef, (snapshot) => {
         const status = snapshot.val();
@@ -290,7 +349,6 @@ function setupControlStatusListeners() {
     });
 }
 
-// ==================== Load Current Status ====================
 async function loadCurrentControlStatus() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -317,7 +375,6 @@ async function loadCurrentControlStatus() {
     }
 }
 
-// ==================== UI Update ====================
 function updateControlStatusUI(status) {
     const mode = status.mode || 'manual';
     currentModeState = mode;
@@ -330,7 +387,7 @@ function updateControlStatusUI(status) {
         } else if (mode === 'manual') {
             modeSpan.textContent = 'ম্যানুয়াল';
             modeSpan.className = 'badge manual';
-        } else if (mode === 'emergency' || mode === 'stop') {
+        } else if (mode === 'emergency') {
             modeSpan.textContent = 'জরুরি বন্ধ';
             modeSpan.className = 'badge stop';
         }
@@ -342,7 +399,7 @@ function updateControlStatusUI(status) {
     
     if (autoBtn) autoBtn.classList.toggle('active', mode === 'auto');
     if (manualBtn) manualBtn.classList.toggle('active', mode === 'manual');
-    if (stopBtn) stopBtn.classList.toggle('active', mode === 'emergency' || mode === 'stop');
+    if (stopBtn) stopBtn.classList.toggle('active', mode === 'emergency');
     
     const powerSourceSection = document.getElementById('powerSourceSection');
     const brushCard = document.getElementById('brushCard');
@@ -442,7 +499,7 @@ function updateBrushPumpStatus(data) {
     }
 }
 
-// ==================== Mode Switch (RESET-AWARE) ====================
+// ==================== ✅ v2.3 — Mode Switch ====================
 async function switchMode(mode) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -453,48 +510,60 @@ async function switchMode(mode) {
         return;
     }
     
-    // ✅ Emergency → Auto transition: reset first
-    const wasEmergency = (currentModeState === 'emergency' || currentModeState === 'stop');
-    
-    if (mode === 'auto' && wasEmergency) {
-        console.log('🔄 Emergency reset → Auto re-arm');
-        await pushCommand('set_mode', { mode: 'manual' });
-        await new Promise(r => setTimeout(r, 400));
+    if (commandInProgress) {
+        console.log("⚠️ Command already in progress, ignoring");
+        return;
     }
     
-    currentModeState = mode;
+    if (currentModeState === mode) {
+        console.log(`Already in ${mode} mode`);
+        return;
+    }
     
-    updateControlStatusUI({ 
-        mode: mode, 
-        power_source: currentSourceState 
-    });
+    commandInProgress = true;
     
     try {
-        await pushCommand('set_mode', { mode: mode });
+        const wasEmergency = (currentModeState === 'emergency');
         
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        await update(statusRef, { 
-            mode: mode,
-            last_updated: Date.now()
-        });
-        
-        if (mode === 'auto') {
-            await startAutoMode();
-            setTimeout(() => performAutoCheck(), 1500);
-        } else if (mode === 'manual') {
-            stopAutoMode();
+        if (mode === 'auto' && wasEmergency) {
+            console.log('🔄 Emergency → Auto: resetting to manual first');
+            await pushCommand('set_mode', { mode: 'manual' });
+            await waitForModeChange('manual', 1500);
         }
         
-        const modeNames = { auto: 'অটো', manual: 'ম্যানুয়াল' };
-        window.showNotification(`${modeNames[mode]} মোড চালু হয়েছে`, 'success');
+        currentModeState = mode;
+        updateControlStatusUI({ 
+            mode: mode, 
+            power_source: currentSourceState 
+        });
+        
+        await pushCommand('set_mode', { mode: mode });
+        
+        const confirmed = await waitForModeChange(mode, 2000);
+        
+        if (confirmed) {
+            if (mode === 'auto') {
+                await startAutoMode();
+                setTimeout(() => performAutoCheck(), 1500);
+            } else if (mode === 'manual') {
+                stopAutoMode();
+            }
+            
+            const modeNames = { auto: 'অটো', manual: 'ম্যানুয়াল' };
+            window.showNotification(`${modeNames[mode]} মোড চালু হয়েছে ✅`, 'success');
+        } else {
+            console.warn("Mode change not confirmed by ESP32");
+            window.showNotification('ESP32 সাড়া দেয়নি — আবার চেষ্টা করুন', 'warning');
+        }
         
     } catch (error) {
         console.error("Error switching mode:", error);
         window.showNotification('মোড পরিবর্তনে সমস্যা হয়েছে', 'error');
+    } finally {
+        commandInProgress = false;
     }
 }
 
-// ==================== Power Source (MANUAL-ONLY) ====================
 async function setPowerSource(source) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -510,29 +579,42 @@ async function setPowerSource(source) {
         return;
     }
     
+    if (commandInProgress) {
+        console.log("⚠️ Command in progress, ignoring duplicate");
+        return;
+    }
+    
+    if (currentSourceState === source) {
+        console.log(`Already on ${source}`);
+        return;
+    }
+    
+    commandInProgress = true;
+    
     try {
+        currentSourceState = source;
+        updateControlStatusUI({ mode: 'manual', power_source: source });
+        
         await pushCommand('set_power_source', { source: source });
         
-        currentSourceState = source;
+        const confirmed = await waitForPowerSource(source, 2000);
         
         const names = { solar: 'সোলার', battery: 'ব্যাটারি', grid: 'গ্রিড', off: 'অফ' };
-        window.showNotification(`${names[source]} চালু করা হয়েছে`, 'success');
         
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        await update(statusRef, { 
-            power_source: source,
-            last_updated: Date.now()
-        });
-        
-        updateControlStatusUI({ mode: 'manual', power_source: source });
+        if (confirmed) {
+            window.showNotification(`${names[source]} চালু হয়েছে ✅`, 'success');
+        } else {
+            window.showNotification('ESP32 সাড়া দেয়নি', 'warning');
+        }
         
     } catch (error) {
         console.error("Error setting power source:", error);
         window.showNotification('পাওয়ার সোর্স পরিবর্তনে সমস্যা', 'error');
+    } finally {
+        commandInProgress = false;
     }
 }
 
-// ==================== Emergency Stop (FULL RESET) ====================
 async function emergencyStop() {
     if (!confirm('সিস্টেম জরুরি বন্ধ করতে চান?')) return;
     
@@ -545,6 +627,9 @@ async function emergencyStop() {
         return;
     }
     
+    if (commandInProgress) return;
+    commandInProgress = true;
+    
     try {
         stopAutoMode();
         
@@ -555,22 +640,18 @@ async function emergencyStop() {
         
         updateControlStatusUI({ mode: 'emergency', power_source: 'off' });
         
-        const statusRef = ref(database, `Devices/${currentUserId}/${currentDeviceId}/data/system_status`);
-        await update(statusRef, { 
-            mode: 'emergency',
-            power_source: 'off',
-            last_updated: Date.now()
-        });
+        await waitForModeChange('emergency', 2000);
         
         window.showNotification('সিস্টেম জরুরি বন্ধ — আবার চালু করতে Auto বা Manual চাপুন', 'warning');
         
     } catch (error) {
         console.error("Error in emergency stop:", error);
         window.showNotification('জরুরি বন্ধে সমস্যা', 'error');
+    } finally {
+        commandInProgress = false;
     }
 }
 
-// ==================== Brush Command ====================
 async function sendBrushCommand(command) {
     if (currentModeState !== 'manual') {
         window.showNotification('শুধু ম্যানুয়াল মোডে ব্রাশ কন্ট্রোল করা যাবে', 'warning');
@@ -586,7 +667,6 @@ async function sendBrushCommand(command) {
     }
 }
 
-// ==================== Pump Command ====================
 async function sendPumpCommand(state) {
     if (currentModeState !== 'manual') {
         window.showNotification('শুধু ম্যানুয়াল মোডে পাম্প কন্ট্রোল করা যাবে', 'warning');
@@ -601,7 +681,6 @@ async function sendPumpCommand(state) {
     }
 }
 
-// ==================== Auto Mode ====================
 async function startAutoMode() {
     if (autoCheckInterval) {
         clearInterval(autoCheckInterval);
@@ -688,5 +767,7 @@ window.emergencyStop = emergencyStop;
 window.sendBrushCommand = sendBrushCommand;
 window.sendPumpCommand = sendPumpCommand;
 window.updateAutoStatus = updateAutoStatus;
+window.waitForModeChange = waitForModeChange;
+window.waitForPowerSource = waitForPowerSource;
 
-console.log("✅ Control.js v2.1 - ESP32 v6.7.2 aligned");
+console.log("✅ Control.js v2.3 - ESP32 v6.8.9 (Priority loop + Command ack + 2s timeout)");
