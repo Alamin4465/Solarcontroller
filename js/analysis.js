@@ -1,5 +1,7 @@
 // js/analysis.js - Dust বাদ, Efficiency Calculated, Chart Fixed
-// ✅ ESP32 v6.7.2 aligned — Firebase path & device ID match
+// ✅ ESP32 v6.8.9 ALIGNED — Priority loop + Firebase speed
+// ✅ v2.2 — Chart.js retry logic, date format fallback
+// ✅ v2.2 — Constants for charge thresholds
 
 import { ref, onValue, push, set, get } from 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js';
 
@@ -18,15 +20,19 @@ function loadChartScript() {
         
         const existingScript = document.querySelector('script[src*="chart.umd"]');
         if (existingScript) {
-            setTimeout(() => {
+            let attempts = 0;
+            const checkInterval = setInterval(() => {
+                attempts++;
                 if (typeof window.Chart !== 'undefined') {
+                    clearInterval(checkInterval);
                     Chart = window.Chart;
                     chartLoaded = true;
                     resolve(Chart);
-                } else {
-                    reject(new Error('Chart.js already loading but not ready'));
+                } else if (attempts > 20) {
+                    clearInterval(checkInterval);
+                    reject(new Error('Chart.js took too long to load'));
                 }
-            }, 1000);
+            }, 500);
             return;
         }
         
@@ -50,6 +56,16 @@ function loadChartScript() {
 const SAVE_INTERVAL = 5000;
 const MAX_HISTORY_DISPLAY = 20;
 
+const CHARGE_THRESHOLDS = Object.freeze({
+    BATTERY_FULL_V: 13.7,
+    BATTERY_SOC_FULL: 95,
+    SOLAR_MIN_FOR_CHARGE_V: 13.0,
+    MIN_BATTERY_CURRENT: 0.1,
+    MIN_SOLAR_CURRENT: 0.1,
+    SOC_CRITICAL: 15,
+    SOC_LOW: 30
+});
+
 // ==================== Global ====================
 let historyData = [];
 let currentSensorData = null;
@@ -72,23 +88,30 @@ let chartData = {
 function formatDate(timestamp) {
     if (!timestamp) return 'N/A';
     try {
-        return new Date(timestamp).toLocaleDateString('bn-BD', {
-            year: 'numeric', month: '2-digit', day: '2-digit'
-        });
+        const d = new Date(timestamp);
+        if (isNaN(d.getTime())) return 'Invalid';
+        
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}/${month}/${year}`;
     } catch (e) { return 'Invalid'; }
 }
 
 function formatTime(timestamp) {
     if (!timestamp) return 'N/A';
     try {
-        return new Date(timestamp).toLocaleTimeString('bn-BD', {
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
+        const d = new Date(timestamp);
+        if (isNaN(d.getTime())) return 'Invalid';
+        
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        const seconds = String(d.getSeconds()).padStart(2, '0');
+        return `${hours}:${minutes}:${seconds}`;
     } catch (e) { return 'Invalid'; }
 }
 
 // ==================== SOC CALCULATION (ESP32 aligned) ====================
-// ✅ 11.0V = 0%, 13.7V = 100%
 function calculateSOC(voltage) {
     let soc = ((voltage - 11.0) / 2.7) * 100;
     return Math.max(0, Math.min(100, soc));
@@ -283,46 +306,40 @@ export async function loadAnalysis() {
     setupCombinedListener();
     await loadHistoryData();
     startAutoSave();
-    
-    if (chartLoaded && Chart) {
-        initChart();
-    } else {
-        setTimeout(() => {
-            if (Chart || window.Chart) {
-                Chart = window.Chart;
-                initChart();
-            }
-        }, 1000);
-    }
+    await initChartWithRetry();
     
     document.getElementById("refreshHistoryBtn")?.addEventListener("click", () => loadHistoryData());
     document.getElementById("exportDataBtn")?.addEventListener("click", () => exportHistoryData());
     document.getElementById("toggleChartBtn")?.addEventListener("click", () => toggleChartMode());
 }
 
-// ==================== Chart Init ====================
+async function initChartWithRetry(maxRetries = 10) {
+    if (chartInstance) return;
+    
+    for (let i = 0; i < maxRetries; i++) {
+        if (typeof window.Chart !== 'undefined') {
+            Chart = window.Chart;
+            initChart();
+            return;
+        }
+        
+        if (i === 0) console.log('⏳ Waiting for Chart.js...');
+        await new Promise(r => setTimeout(r, 300));
+    }
+    
+    console.error("❌ Chart.js not available after retries");
+    const container = document.getElementById('chartContainer');
+    if (container) {
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">📊 চার্ট লোড হয়নি<br><small>ইন্টারনেট চেক করুন বা refresh করুন</small></div>';
+    }
+}
+
 function initChart() {
     const ctx = document.getElementById('analysisChart');
-    if (!ctx) {
-        console.warn('Chart canvas not found');
-        return;
-    }
-    
-    if (!Chart && !window.Chart) {
-        console.warn('Chart.js not loaded');
-        const container = document.getElementById('chartContainer');
-        if (container) {
-            container.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">📊 চার্ট লোড হয়নি<br><small>ইন্টারনেট চেক করুন</small></div>';
-        }
-        return;
-    }
-    
+    if (!ctx) { console.warn('Chart canvas not found'); return; }
+    if (!Chart && !window.Chart) { console.warn('Chart.js not loaded'); return; }
     if (!Chart) Chart = window.Chart;
-    
-    if (chartInstance) {
-        chartInstance.destroy();
-        chartInstance = null;
-    }
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     
     try {
         chartInstance = new Chart(ctx, {
@@ -330,55 +347,20 @@ function initChart() {
             data: {
                 labels: chartData.labels.length > 0 ? chartData.labels : ['No Data'],
                 datasets: [
-                    {
-                        label: 'সোলার V',
-                        data: chartData.solarVoltage.length > 0 ? chartData.solarVoltage : [0],
-                        borderColor: '#f97316',
-                        backgroundColor: 'rgba(249, 115, 22, 0.1)',
-                        tension: 0.3,
-                        pointRadius: 2,
-                        borderWidth: 2,
-                        fill: true
-                    },
-                    {
-                        label: 'ব্যাটারি V',
-                        data: chartData.batteryVoltage.length > 0 ? chartData.batteryVoltage : [0],
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        tension: 0.3,
-                        pointRadius: 2,
-                        borderWidth: 2,
-                        fill: true
-                    },
-                    {
-                        label: 'লোড V',
-                        data: chartData.loadVoltage.length > 0 ? chartData.loadVoltage : [0],
-                        borderColor: '#06b6d4',
-                        backgroundColor: 'rgba(6, 182, 212, 0.1)',
-                        tension: 0.3,
-                        pointRadius: 2,
-                        borderWidth: 2,
-                        fill: true
-                    }
+                    { label: 'সোলার V', data: chartData.solarVoltage.length > 0 ? chartData.solarVoltage : [0], borderColor: '#f97316', backgroundColor: 'rgba(249, 115, 22, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true },
+                    { label: 'ব্যাটারি V', data: chartData.batteryVoltage.length > 0 ? chartData.batteryVoltage : [0], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true },
+                    { label: 'লোড V', data: chartData.loadVoltage.length > 0 ? chartData.loadVoltage : [0], borderColor: '#06b6d4', backgroundColor: 'rgba(6, 182, 212, 0.1)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        labels: { color: '#cbd5e1', font: { size: 11 }, boxWidth: 12, padding: 10 }
-                    }
+                    legend: { labels: { color: '#cbd5e1', font: { size: 11 }, boxWidth: 12, padding: 10 } }
                 },
                 scales: {
-                    x: {
-                        ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: 10 },
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    },
-                    y: {
-                        ticks: { color: '#94a3b8', font: { size: 10 } },
-                        grid: { color: 'rgba(255,255,255,0.05)' }
-                    }
+                    x: { ticks: { color: '#94a3b8', font: { size: 9 }, maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } }
                 }
             }
         });
@@ -388,13 +370,8 @@ function initChart() {
     }
 }
 
-// ==================== Chart Toggle ====================
 function toggleChartMode() {
-    if (!chartInstance) {
-        console.warn('Chart not initialized');
-        return;
-    }
-    
+    if (!chartInstance) { console.warn('Chart not initialized'); return; }
     chartMode = chartMode === 'voltage' ? 'current' : 'voltage';
     
     if (chartMode === 'voltage') {
@@ -413,13 +390,14 @@ function toggleChartMode() {
     chartInstance.update();
 }
 
-// ==================== Chart Update ====================
 function updateChart() {
     if (!chartInstance) return;
     
     const labels = historyData.map(item => {
         const d = new Date(item.timestamp);
-        return d.toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
     }).reverse();
     
     const solarVoltage = historyData.map(item => item.solar_voltage || 0).reverse();
@@ -452,7 +430,6 @@ function updateChart() {
     chartInstance.update('none');
 }
 
-// ==================== Sensor Listener ====================
 function setupCombinedListener() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -492,34 +469,41 @@ function setupCombinedListener() {
     };
 }
 
-// ==================== Summary Cards ====================
 function updateSummaryCards(data) {
     const solarVoltage = parseFloat(data.solar_voltage) || 0;
     const solarCurrent = parseFloat(data.solar_current) || 0;
     const solarPower = solarVoltage * solarCurrent;
     
-    document.getElementById('solarSummaryV').textContent = solarVoltage.toFixed(1);
-    document.getElementById('solarSummaryA').textContent = solarCurrent.toFixed(2);
-    document.getElementById('solarSummaryW').textContent = solarPower.toFixed(1);
+    const solarVElem = document.getElementById('solarSummaryV');
+    const solarAElem = document.getElementById('solarSummaryA');
+    const solarWElem = document.getElementById('solarSummaryW');
+    if (solarVElem) solarVElem.textContent = solarVoltage.toFixed(1);
+    if (solarAElem) solarAElem.textContent = solarCurrent.toFixed(2);
+    if (solarWElem) solarWElem.textContent = solarPower.toFixed(1);
     
     const batteryVoltage = parseFloat(data.battery_voltage) || 0;
     const batteryCurrent = parseFloat(data.battery_current) || 0;
     const batteryPower = Math.abs(batteryVoltage * batteryCurrent);
     
-    document.getElementById('batterySummaryV').textContent = batteryVoltage.toFixed(1);
-    document.getElementById('batterySummaryA').textContent = batteryCurrent.toFixed(2);
-    document.getElementById('batterySummaryW').textContent = batteryPower.toFixed(1);
+    const battVElem = document.getElementById('batterySummaryV');
+    const battAElem = document.getElementById('batterySummaryA');
+    const battWElem = document.getElementById('batterySummaryW');
+    if (battVElem) battVElem.textContent = batteryVoltage.toFixed(1);
+    if (battAElem) battAElem.textContent = batteryCurrent.toFixed(2);
+    if (battWElem) battWElem.textContent = batteryPower.toFixed(1);
     
     const loadVoltage = parseFloat(data.load_voltage) || 0;
     const loadCurrent = parseFloat(data.battery_current) || 0;
     const loadPower = loadVoltage * loadCurrent;
     
-    document.getElementById('loadSummaryV').textContent = loadVoltage.toFixed(1);
-    document.getElementById('loadSummaryA').textContent = loadCurrent.toFixed(2);
-    document.getElementById('loadSummaryW').textContent = loadPower.toFixed(1);
+    const loadVElem = document.getElementById('loadSummaryV');
+    const loadAElem = document.getElementById('loadSummaryA');
+    const loadWElem = document.getElementById('loadSummaryW');
+    if (loadVElem) loadVElem.textContent = loadVoltage.toFixed(1);
+    if (loadAElem) loadAElem.textContent = loadCurrent.toFixed(2);
+    if (loadWElem) loadWElem.textContent = loadPower.toFixed(1);
 }
 
-// ==================== Auto Save ====================
 function startAutoSave() {
     if (autoSaveInterval) clearInterval(autoSaveInterval);
     autoSaveInterval = setInterval(async () => {
@@ -566,7 +550,6 @@ async function saveToHistory(data) {
     }
 }
 
-// ==================== Load History ====================
 async function loadHistoryData() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -603,7 +586,6 @@ async function loadHistoryData() {
     }
 }
 
-// ==================== Update Table ====================
 function updateHistoryTable() {
     const tbody = document.getElementById('historyTableBody');
     if (!tbody) return;
@@ -659,7 +641,6 @@ function flashSaveIndicator() {
     }
 }
 
-// ==================== Export ====================
 function exportHistoryData() {
     if (!historyData || historyData.length === 0) {
         alert('এক্সপোর্ট করার ডাটা নেই');
@@ -697,7 +678,6 @@ function exportHistoryData() {
     alert(`✅ এক্সপোর্ট সম্পন্ন: ${historyData.length} রেকর্ড`);
 }
 
-// ==================== Cleanup ====================
 export function cleanupAnalysis() {
     if (autoSaveInterval) { clearInterval(autoSaveInterval); autoSaveInterval = null; }
     if (combinedListenerUnsubscribe) { combinedListenerUnsubscribe(); combinedListenerUnsubscribe = null; }
@@ -705,4 +685,4 @@ export function cleanupAnalysis() {
     console.log("🧹 Analysis cleanup");
 }
 
-console.log("✅ Analysis.js v2.0 - ESP32 v6.7.2 aligned");
+console.log("✅ Analysis.js v2.2 - ESP32 v6.8.9 (Priority loop + Firebase speed)");
