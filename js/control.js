@@ -1,7 +1,8 @@
 // js/control.js - Emergency reset + Auto re-arm + Manual source re-activation
 // ✅ ESP32 v6.8.9 ALIGNED — Priority loop + Fast commands
+// ✅ v2.4 — FIXED: Auto mode auto-start bug on dashboard return
+// ✅ v2.4 — Auto monitor only on user click OR external mode change
 // ✅ v2.3 — Faster command ack (2s timeout, was 3s)
-// ✅ v2.3 — Duplicate prevention + Ack-aware
 
 import { ref, onValue, get, push, update, set } from 'firebase/database';
 
@@ -40,7 +41,7 @@ async function pushCommand(action, extraData = {}) {
     return newCommandRef.key;
 }
 
-// ==================== ✅ v2.3 — Wait for Ack (2s timeout for v6.8.9 speed) ====================
+// ==================== Wait for Ack (2s timeout for v6.8.9 speed) ====================
 
 async function waitForModeChange(expectedMode, timeout = 2000) {
     const database = window.database;
@@ -110,6 +111,7 @@ let autoCheckInterval = null;
 let lastDataReceived = 0;
 let dataTimeout = null;
 let commandInProgress = false;
+let controlPanelLoaded = false;   // ⭐ v2.4 — Panel load guard
 
 const DATA_TIMEOUT_MS = 15000;
 const CHECK_INTERVAL_MS = 5000;
@@ -137,6 +139,11 @@ export async function loadControl() {
         content.innerHTML = `<div class="card text-center"><p>ডিভাইস সিলেক্ট করুন</p></div>`;
         return;
     }
+    
+    // ⭐ v2.4 — Reset state on load (avoid leftover from previous page)
+    currentModeState = 'manual';
+    currentSourceState = 'off';
+    controlPanelLoaded = false;
     
     content.innerHTML = `
         <div class="control-grid">
@@ -235,6 +242,11 @@ export async function loadControl() {
     await loadCurrentControlStatus();
     setupControlStatusListeners();
     setupLastCommandListener();
+    
+    // ⭐ v2.4 — Mark panel as loaded (enables external mode change detection)
+    controlPanelLoaded = true;
+    
+    console.log("🎮 Control panel loaded. Mode:", currentModeState);
 }
 
 // ==================== Event Listeners ====================
@@ -320,6 +332,7 @@ function updateLastCommandDisplay(cmd) {
     }
 }
 
+// ==================== ⭐ v2.4 — Status Listener with Auto Bug Fix ====================
 function setupControlStatusListeners() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -331,6 +344,9 @@ function setupControlStatusListeners() {
     onValue(systemStatusRef, (snapshot) => {
         const status = snapshot.val();
         if (status) {
+            const modeChanged = (currentModeState !== status.mode);
+            const oldMode = currentModeState;
+            
             if (status.mode) currentModeState = status.mode;
             if (status.power_source) currentSourceState = status.power_source;
             
@@ -338,6 +354,20 @@ function setupControlStatusListeners() {
             
             if (window.updatePowerFlowBySource) {
                 window.updatePowerFlowBySource(status.power_source);
+            }
+            
+            // ⭐ v2.4 FIX: Auto monitor only starts on EXTERNAL mode change
+            // NOT on initial panel load — prevents auto-start on dashboard return
+            if (controlPanelLoaded && modeChanged && status.mode === 'auto' && !isAutoModeActive) {
+                console.log(`🎯 External auto mode detected (${oldMode} → auto). Starting monitor.`);
+                startAutoMode();
+                setTimeout(() => performAutoCheck(), 1500);
+            }
+            
+            // ⭐ v2.4 FIX: Stop auto monitor if mode externally set to manual
+            if (controlPanelLoaded && modeChanged && status.mode === 'manual' && isAutoModeActive) {
+                console.log(`🛑 External manual mode detected (${oldMode} → manual). Stopping monitor.`);
+                stopAutoMode();
             }
         }
     });
@@ -349,6 +379,7 @@ function setupControlStatusListeners() {
     });
 }
 
+// ==================== Load Current Status ====================
 async function loadCurrentControlStatus() {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -364,6 +395,8 @@ async function loadCurrentControlStatus() {
             currentModeState = status.mode || 'manual';
             currentSourceState = status.power_source || 'grid';
             updateControlStatusUI(status);
+            
+            console.log(`📊 Loaded mode: ${currentModeState}`);
         } else {
             currentModeState = 'manual';
             currentSourceState = 'grid';
@@ -375,6 +408,7 @@ async function loadCurrentControlStatus() {
     }
 }
 
+// ==================== UI Update ====================
 function updateControlStatusUI(status) {
     const mode = status.mode || 'manual';
     currentModeState = mode;
@@ -499,7 +533,7 @@ function updateBrushPumpStatus(data) {
     }
 }
 
-// ==================== ✅ v2.3 — Mode Switch ====================
+// ==================== Mode Switch ====================
 async function switchMode(mode) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -542,11 +576,18 @@ async function switchMode(mode) {
         const confirmed = await waitForModeChange(mode, 2000);
         
         if (confirmed) {
+            // ⭐ v2.4 — Auto monitor start only on user click
             if (mode === 'auto') {
-                await startAutoMode();
-                setTimeout(() => performAutoCheck(), 1500);
+                if (!isAutoModeActive) {
+                    await startAutoMode();
+                    setTimeout(() => performAutoCheck(), 1500);
+                    console.log("🎯 Auto monitor started (user click)");
+                }
             } else if (mode === 'manual') {
-                stopAutoMode();
+                if (isAutoModeActive) {
+                    stopAutoMode();
+                    console.log("🛑 Auto monitor stopped (user click)");
+                }
             }
             
             const modeNames = { auto: 'অটো', manual: 'ম্যানুয়াল' };
@@ -564,6 +605,7 @@ async function switchMode(mode) {
     }
 }
 
+// ==================== Power Source ====================
 async function setPowerSource(source) {
     const database = window.database;
     const currentUserId = window.currentUserId;
@@ -615,6 +657,7 @@ async function setPowerSource(source) {
     }
 }
 
+// ==================== Emergency Stop ====================
 async function emergencyStop() {
     if (!confirm('সিস্টেম জরুরি বন্ধ করতে চান?')) return;
     
@@ -652,6 +695,7 @@ async function emergencyStop() {
     }
 }
 
+// ==================== Brush Command ====================
 async function sendBrushCommand(command) {
     if (currentModeState !== 'manual') {
         window.showNotification('শুধু ম্যানুয়াল মোডে ব্রাশ কন্ট্রোল করা যাবে', 'warning');
@@ -667,6 +711,7 @@ async function sendBrushCommand(command) {
     }
 }
 
+// ==================== Pump Command ====================
 async function sendPumpCommand(state) {
     if (currentModeState !== 'manual') {
         window.showNotification('শুধু ম্যানুয়াল মোডে পাম্প কন্ট্রোল করা যাবে', 'warning');
@@ -681,6 +726,7 @@ async function sendPumpCommand(state) {
     }
 }
 
+// ==================== Auto Mode ====================
 async function startAutoMode() {
     if (autoCheckInterval) {
         clearInterval(autoCheckInterval);
@@ -770,4 +816,4 @@ window.updateAutoStatus = updateAutoStatus;
 window.waitForModeChange = waitForModeChange;
 window.waitForPowerSource = waitForPowerSource;
 
-console.log("✅ Control.js v2.3 - ESP32 v6.8.9 (Priority loop + Command ack + 2s timeout)");
+console.log("✅ Control.js v2.4 - ESP32 v6.8.9 (Auto mode bug fixed)");
